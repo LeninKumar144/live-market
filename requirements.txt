@@ -1,3 +1,11 @@
+# FastAPI stack: needed when Render (or any host) runs `pip install -r requirements.txt`
+# at repo root. Without these, `uvicorn main:app` fails with "command not found" / missing
+# fastapi even though backend/requirements.txt lists them.
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+python-multipart>=0.0.9
+tzdata>=2024.1
+
 httpx>=0.27.0
 python-dotenv>=1.0.0
 pydantic>=2.0

@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+*.egg-info/
+.Python
+
+# Node (root + any subfolder — install with npm ci / npm install)
+node_modules/
+
+# Secrets & local env (use .env.example for templates)
+.env
+.env.local
+.env.*.local
+
+# Runtime logs (never commit)
+logs/
+*.log
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
