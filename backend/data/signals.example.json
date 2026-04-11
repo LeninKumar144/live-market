@@ -1,0 +1,18 @@
+[
+  {
+    "id": "example-1",
+    "type": "BUY CE",
+    "strike": 22800,
+    "reason": "Put writing pattern — example row for dashboard",
+    "timestamp_iso": "2026-03-30T10:32:00+05:30",
+    "confidence": "High"
+  },
+  {
+    "id": "example-2",
+    "type": "BUY PE",
+    "strike": 22750,
+    "reason": "Call writing / bearish lean — example",
+    "timestamp_iso": "2026-03-30T10:40:00+05:30",
+    "confidence": "Medium"
+  }
+]

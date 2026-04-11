@@ -1,0 +1,19 @@
+# Render Blueprint (free tier): deploy the FastAPI backend.
+# Dashboard: New Web Service -> Connect repo -> Root Directory: backend
+#   Build:  pip install -r requirements.txt
+#   Start:  uvicorn main:app --host 0.0.0.0 --port $PORT
+#
+# Env vars:
+#   CORS_ORIGINS=https://your-app.vercel.app
+#   SIGNALS_LOG_DIR=/opt/render/project/src/logs   (optional, if you sync logs into the repo)
+
+services:
+  - type: web
+    name: nifty-signals-api
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.0"

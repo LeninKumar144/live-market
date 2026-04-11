@@ -1,0 +1,13 @@
+{
+  "name": "marketanalyze",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently -k -n api,web -c cyan,magenta \"npm run dev:api\" \"npm run dev:web\"",
+    "dev:api": "node scripts/run-api.cjs",
+    "dev:web": "node scripts/wait-tcp.cjs && cd frontend && npm run dev:vite",
+    "postinstall": "npm install --prefix frontend"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}

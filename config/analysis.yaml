@@ -1,0 +1,50 @@
+# Tunable thresholds for NIFTY intraday option analysis (edit without code changes)
+
+poll_interval_seconds: 7
+signal_cooldown_seconds: 180
+
+# Strike grid: number of strikes above/below ATM to evaluate (each side)
+strike_radius: 8
+
+# Liquidity: ignore strikes weaker than these (both call and put legs checked)
+min_open_interest: 3000
+min_volume: 500
+
+# Volume spike: current interval volume delta must exceed this × average of prior two deltas
+volume_spike_multiplier: 1.35
+
+# Optional absolute floor so tiny averages do not false-trigger
+min_volume_delta: 10
+
+# NIFTY strike step (points)
+strike_step: 50
+
+# Buy strike: use ATM (spot rounded to strike_step), then walk up to this many steps away
+# if that CE/PE leg is missing or below min OI/volume (execution strike, not pattern strike).
+buy_strike_max_steps_from_atm: 4
+
+# Execution style: atm | otm | smart
+#   otm  -> buy CE above ATM / buy PE below ATM by otm_strike_steps (liquidity walk toward ATM).
+#   smart-> same as otm only when spot move aligns (up for CE, down for PE); else ATM.
+buy_strike_mode: otm
+otm_strike_steps: 1
+
+# Spot move = last spot minus first spot over this many chain snapshots (polls).
+market_move_lookback_snapshots: 10
+# Below this absolute point change, move is treated as "flat" (smart mode + labelling).
+market_move_flat_threshold_points: 3.0
+
+# Reversal: sum OI within this many strikes of ATM for "total OI" trend
+reversal_oi_strikes_radius: 2
+
+# HTTP
+http_timeout_seconds: 25
+max_http_retries: 4
+retry_backoff_base_seconds: 1.5
+
+# Stock options (F&O on single names) — used by /stock-options/live; lower bars than index
+stock_option_min_open_interest: 500
+stock_option_min_volume: 50
+stock_option_buy_strike_max_steps_from_atm: 8
+# Spot move threshold (points) for "smart" CE/PE placement on stocks; also floored vs spot in code
+stock_market_move_flat_threshold_points: 5.0
