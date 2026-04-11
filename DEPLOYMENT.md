@@ -81,16 +81,18 @@ CORS is permissive by default (`CORS_ORIGINS=*`). For a single known frontend or
 
 ## Deploy frontend on Vercel (free)
 
-1. Import the GitHub repo in Vercel.
+1. Import the GitHub repo in Vercel (same GitHub account as Render is fine).
 2. **Root directory:** `frontend`
 3. **Framework preset:** Vite  
 4. **Build command:** `npm run build`  
 5. **Output directory:** `dist`
-6. **Environment variable:** `VITE_API_URL` = your Render service URL, e.g. `https://nifty-api.onrender.com` (no trailing slash).
+6. **API URL:** `frontend/vercel.json` sets `VITE_API_URL` to `https://live-market-back.onrender.com` for production builds. To use a different API host, change that file or add **`VITE_API_URL`** under Vercel → Project → **Environment Variables** (Production) — no trailing slash.
 
-`frontend/vercel.json` rewrites SPA routes to `index.html`.
+`frontend/vercel.json` also rewrites SPA routes to `index.html`.
 
-After deploy, open the Vercel URL; the browser will call `VITE_API_URL/oi`, `/hedging`, etc.
+**CORS:** On Render, set **`CORS_ORIGINS`** to your exact Vercel origin, e.g. `https://your-project.vercel.app` (comma-separated if several). The browser calls the Render API directly from that origin.
+
+After deploy, open the Vercel URL; the dashboard loads data from the Render backend.
 
 ---
 

@@ -110,10 +110,10 @@ Array of objects:
 3. **Framework Preset:** Vite  
 4. **Build Command:** `npm run build`  
 5. **Output Directory:** `dist`
-6. **Environment Variables:** `VITE_API_URL` = your Render API URL (no trailing slash).
+6. **API URL:** `frontend/vercel.json` already sets `VITE_API_URL` to `https://live-market-back.onrender.com` for builds. Override in Vercel **Environment Variables** if you use another API host.
 7. Deploy.
 
-Open the Vercel URL; the app will call the Render API (ensure `CORS_ORIGINS` includes your Vercel domain).
+Open the Vercel URL; the app calls the Render API. Set Render **`CORS_ORIGINS`** to your Vercel origin (e.g. `https://your-app.vercel.app`).
 
 ---
 
