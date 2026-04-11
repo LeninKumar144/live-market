@@ -63,11 +63,11 @@ The backend reads the first sheet named **Signals** (or the first sheet if that 
 
 1. Push this repo to GitHub.
 2. Render → **New** → **Web Service** → connect the repo.
-3. **Root directory:** leave blank (repo root) so Render does not pick up the repo-root `requirements.txt`, which omits `uvicorn`. The included `render.yaml` blueprint uses this layout.
+3. **Root directory:** leave blank (repo root) unless you know you are using only `backend/` paths.
 4. **Build command:** `pip install -r backend/requirements.txt`
-5. **Start command:** `cd backend && python -m uvicorn main:app --host 0.0.0.0 --port $PORT` (`python -m` avoids PATH issues with the `uvicorn` entrypoint.)
+5. **Start command:** `python -m uvicorn render_api:app --host 0.0.0.0 --port $PORT`
 
-If you prefer **Root directory:** `backend`, use `pip install -r requirements.txt` and `python -m uvicorn main:app --host 0.0.0.0 --port $PORT` instead.
+   Do **not** run `uvicorn main:app` from repo root: that imports the **CLI** `main.py`, which has no `app` and fails with `Attribute "app" not found in module "main"`. Use `render_api:app` from root, or if **Root directory** is `backend`, use `python -m uvicorn main:app --host 0.0.0.0 --port $PORT`.
 6. **Environment variables** (minimum for OI/hedging features; signals-only needs fewer):
    - `UPSTOX_ACCESS_TOKEN` — if you use chain/OI sync
    - `SIGNALS_EXCEL_PATH` — optional path to a persistent volume file if you use Excel on Render
