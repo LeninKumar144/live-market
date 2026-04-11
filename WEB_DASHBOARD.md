@@ -91,9 +91,9 @@ Array of objects:
 
 1. Push this repo to GitHub.
 2. [Render](https://render.com) → **New +** → **Web Service** → connect repo.
-3. **Root Directory:** `backend`
-4. **Build Command:** `pip install -r requirements.txt`
-5. **Start Command:** `uvicorn main:app --host 0.0.0.0 --port $PORT`
+3. **Root Directory:** leave blank (repo root), or set to `backend` and adjust commands — see `DEPLOYMENT.md`.
+4. **Build Command:** `pip install -r backend/requirements.txt` (from repo root).
+5. **Start Command:** `cd backend && python -m uvicorn main:app --host 0.0.0.0 --port $PORT`
 6. **Environment** → add `CORS_ORIGINS=https://your-frontend.vercel.app`
 7. Deploy. Note the service URL, e.g. `https://nifty-signals-api.onrender.com`.
 

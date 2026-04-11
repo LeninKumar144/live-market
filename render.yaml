@@ -1,7 +1,13 @@
 # Render Blueprint (free tier): deploy the FastAPI backend.
-# Dashboard: New Web Service -> Connect repo -> Root Directory: backend
-#   Build:  pip install -r requirements.txt
-#   Start:  uvicorn main:app --host 0.0.0.0 --port $PORT
+#
+# Uses repo root (no rootDir) so installs always use backend/requirements.txt.
+# That avoids "uvicorn: command not found" when the dashboard Root Directory is left blank
+# (which would install only the repo-root requirements.txt — no uvicorn).
+#
+# Manual setup equivalent:
+#   Root Directory: (empty) or repo root
+#   Build:  pip install -r backend/requirements.txt
+#   Start:  cd backend && python -m uvicorn main:app --host 0.0.0.0 --port $PORT
 #
 # Env vars:
 #   CORS_ORIGINS=https://your-app.vercel.app
@@ -11,9 +17,8 @@ services:
   - type: web
     name: nifty-signals-api
     runtime: python
-    rootDir: backend
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    buildCommand: pip install --no-cache-dir -r backend/requirements.txt
+    startCommand: cd backend && python -m uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: PYTHON_VERSION
         value: "3.12.0"
