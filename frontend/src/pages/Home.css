@@ -1302,6 +1302,18 @@
   border: 1px solid rgba(92, 124, 250, 0.22);
 }
 
+.live-pred-card--slim {
+  padding: 0.85rem 1rem;
+}
+
+.live-pred-card--slim .live-pred-disclaimer {
+  margin-bottom: 0.65rem;
+}
+
+.live-pred-card--slim .live-pred-wall-list {
+  margin-top: 0;
+}
+
 .live-pred-card__head {
   display: flex;
   flex-wrap: wrap;

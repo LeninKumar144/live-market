@@ -27,23 +27,6 @@ function formatNetPremium(v) {
   return n > 0 ? `Pay ${formatInr(n)}` : `Receive ${formatInr(Math.abs(n))}`;
 }
 
-function trendPillClass(key) {
-  const k = String(key || "");
-  if (k === "long_buildup") return "trend-pill trend-pill--long";
-  if (k === "short_buildup") return "trend-pill trend-pill--short";
-  if (k === "profit_booking") return "trend-pill trend-pill--profit";
-  if (k === "short_covering") return "trend-pill trend-pill--cover";
-  return "trend-pill trend-pill--neutral";
-}
-
-function sessionLeanPillClass(key) {
-  const k = String(key || "");
-  if (k === "lean_up") return "live-pred-pill live-pred-pill--up";
-  if (k === "lean_down") return "live-pred-pill live-pred-pill--dn";
-  if (k === "range") return "live-pred-pill live-pred-pill--range";
-  return "live-pred-pill live-pred-pill--mixed";
-}
-
 function wallVerdictClass(verdict) {
   const v = String(verdict || "");
   if (v === "break_up_more_likely" || v === "hold_floor_more_likely") return "wall-verdict wall-verdict--support-up";
@@ -477,152 +460,43 @@ export default function Home() {
 
           <OpeningSessionCards session={oi.opening_session} />
 
-          {oi.live_prediction && (
-            <div className="live-pred-card">
-              <div className="live-pred-card__head">
-                <div>
-                  <h3 className="live-pred-card__title">Live trend &amp; level-break read</h3>
-                  <p className="muted small live-pred-card__sub">
-                    Intraday wall break + full-chain ΔOI (vs prev close). For open / first-15m bias see{" "}
-                    <strong>Opening session bias</strong> above (gap, VIX, OR, ΔOI vs 09:15). Future trend =
-                    09:15–09:30 IST. Σ CE/PE <strong>Δ volume</strong> = since previous refresh.
-                  </p>
+          {oi.live_prediction &&
+            Array.isArray(oi.live_prediction.walls) &&
+            oi.live_prediction.walls.length > 0 && (
+              <div className="live-pred-card live-pred-card--slim">
+                <div className="live-pred-card__head">
+                  <div>
+                    <h3 className="live-pred-card__title">OI walls — break vs hold</h3>
+                    <p className="muted small live-pred-card__sub">
+                      Live ΔOI at nearest support / resistance (vs prev close). Open bias, gap, OR, and chain totals are
+                      in the cards above.
+                    </p>
+                  </div>
                 </div>
-                {oi.live_prediction.session_move?.bias_key ? (
-                  <span className={sessionLeanPillClass(oi.live_prediction.session_move.bias_key)} title="Combined heuristic">
-                    {oi.live_prediction.session_move.headline}
-                  </span>
-                ) : null}
+                <p className="muted small live-pred-disclaimer">
+                  {oi.live_prediction.disclaimer || "Heuristic wall read from option ΔOI — not advice."}
+                </p>
+                <ul className="live-pred-wall-list">
+                  {oi.live_prediction.walls.map((w, i) => (
+                    <li key={`${w.strike}-${w.role}-${i}`} className="live-pred-wall-item">
+                      <div className="live-pred-wall-item__top">
+                        <span className="live-pred-wall-item__role">
+                          {w.role === "resistance" ? "Resistance" : "Support"} @ {w.strike}
+                        </span>
+                        <span className={wallVerdictClass(w.break_verdict)}>{w.verdict_label}</span>
+                      </div>
+                      <p className="muted small live-pred-wall-item__reason">{w.reason}</p>
+                      <p className="live-pred-wall-item__oi muted small">
+                        CE OI {Number(w.ce_oi).toLocaleString()} (Δ {Number(w.ce_oi_change) >= 0 ? "+" : ""}
+                        {Number(w.ce_oi_change).toLocaleString()}) · PE OI {Number(w.pe_oi).toLocaleString()} (Δ{" "}
+                        {Number(w.pe_oi_change) >= 0 ? "+" : ""}
+                        {Number(w.pe_oi_change).toLocaleString()})
+                      </p>
+                    </li>
+                  ))}
+                </ul>
               </div>
-              <p className="muted small live-pred-disclaimer">{oi.live_prediction.disclaimer}</p>
-
-              <div className="live-pred-grid">
-                <div className="live-pred-block">
-                  <h4 className="live-pred-block__title">Opening future trend</h4>
-                  {oi.live_prediction.opening_trend_label ? (
-                    <>
-                      <span className={trendPillClass(oi.live_prediction.opening_trend_key)}>
-                        {oi.live_prediction.opening_trend_label}
-                      </span>
-                      {oi.live_prediction.opening_trend_is_provisional ? (
-                        <p className="muted small live-pred-block__note">Provisional until 09:30 anchor is fixed.</p>
-                      ) : null}
-                    </>
-                  ) : (
-                    <p className="muted small">No opening-window trend yet (needs ticks in 09:15–09:30).</p>
-                  )}
-                </div>
-
-                <div className="live-pred-block">
-                  <h4 className="live-pred-block__title">Full chain OI, volume &amp; ΔOI (session)</h4>
-                  <ul className="live-pred-stats">
-                    <li>
-                      <span className="live-pred-stats__k">Σ CE OI</span>
-                      <span className="live-pred-stats__v">
-                        {oi.total_call_oi != null ? Number(oi.total_call_oi).toLocaleString("en-IN") : "—"}
-                      </span>
-                    </li>
-                    <li>
-                      <span className="live-pred-stats__k">Σ PE OI</span>
-                      <span className="live-pred-stats__v">
-                        {oi.total_put_oi != null ? Number(oi.total_put_oi).toLocaleString("en-IN") : "—"}
-                      </span>
-                    </li>
-                    <li>
-                      <span className="live-pred-stats__k">Σ CE volume</span>
-                      <span className="live-pred-stats__v">
-                        {oi.total_call_volume != null ? Number(oi.total_call_volume).toLocaleString("en-IN") : "—"}
-                      </span>
-                    </li>
-                    <li>
-                      <span className="live-pred-stats__k">Σ PE volume</span>
-                      <span className="live-pred-stats__v">
-                        {oi.total_put_volume != null ? Number(oi.total_put_volume).toLocaleString("en-IN") : "—"}
-                      </span>
-                    </li>
-                    <li>
-                      <span className="live-pred-stats__k">Σ CE Δ volume</span>
-                      <span className="live-pred-stats__v" title="Since previous chain refresh">
-                        {oi.live_prediction.aggregate_chain?.total_ce_volume_change_since_last_poll == null
-                          ? "— (first poll)"
-                          : `${Number(oi.live_prediction.aggregate_chain.total_ce_volume_change_since_last_poll) >= 0 ? "+" : ""}${Number(
-                              oi.live_prediction.aggregate_chain.total_ce_volume_change_since_last_poll,
-                            ).toLocaleString("en-IN")}`}
-                      </span>
-                    </li>
-                    <li>
-                      <span className="live-pred-stats__k">Σ PE Δ volume</span>
-                      <span className="live-pred-stats__v" title="Since previous chain refresh">
-                        {oi.live_prediction.aggregate_chain?.total_pe_volume_change_since_last_poll == null
-                          ? "— (first poll)"
-                          : `${Number(oi.live_prediction.aggregate_chain.total_pe_volume_change_since_last_poll) >= 0 ? "+" : ""}${Number(
-                              oi.live_prediction.aggregate_chain.total_pe_volume_change_since_last_poll,
-                            ).toLocaleString("en-IN")}`}
-                      </span>
-                    </li>
-                    <li>
-                      <span className="live-pred-stats__k">Σ CE ΔOI</span>
-                      <span className="live-pred-stats__v">
-                        {oi.live_prediction.aggregate_chain?.total_ce_oi_change != null
-                          ? `${Number(oi.live_prediction.aggregate_chain.total_ce_oi_change) >= 0 ? "+" : ""}${Number(
-                              oi.live_prediction.aggregate_chain.total_ce_oi_change,
-                            ).toLocaleString("en-IN")}`
-                          : "—"}
-                      </span>
-                    </li>
-                    <li>
-                      <span className="live-pred-stats__k">Σ PE ΔOI</span>
-                      <span className="live-pred-stats__v">
-                        {oi.live_prediction.aggregate_chain?.total_pe_oi_change != null
-                          ? `${Number(oi.live_prediction.aggregate_chain.total_pe_oi_change) >= 0 ? "+" : ""}${Number(
-                              oi.live_prediction.aggregate_chain.total_pe_oi_change,
-                            ).toLocaleString("en-IN")}`
-                          : "—"}
-                      </span>
-                    </li>
-                    <li>
-                      <span className="live-pred-stats__k">Bias</span>
-                      <span className="live-pred-stats__v">{oi.live_prediction.aggregate_chain?.bias || "—"}</span>
-                    </li>
-                  </ul>
-                </div>
-              </div>
-
-              {Array.isArray(oi.live_prediction.session_move?.detail_lines) &&
-                oi.live_prediction.session_move.detail_lines.length > 0 && (
-                  <ul className="live-pred-narrative">
-                    {oi.live_prediction.session_move.detail_lines.map((line, i) => (
-                      <li key={i}>{line}</li>
-                    ))}
-                  </ul>
-                )}
-
-              {Array.isArray(oi.live_prediction.walls) && oi.live_prediction.walls.length > 0 && (
-                <div className="live-pred-walls">
-                  <h4 className="live-pred-walls__title">OI walls — break vs hold (live ΔOI)</h4>
-                  <ul className="live-pred-wall-list">
-                    {oi.live_prediction.walls.map((w, i) => (
-                      <li key={`${w.strike}-${w.role}-${i}`} className="live-pred-wall-item">
-                        <div className="live-pred-wall-item__top">
-                          <span className="live-pred-wall-item__role">
-                            {w.role === "resistance" ? "Resistance" : "Support"} @ {w.strike}
-                          </span>
-                          <span className={wallVerdictClass(w.break_verdict)}>{w.verdict_label}</span>
-                        </div>
-                        <p className="muted small live-pred-wall-item__reason">{w.reason}</p>
-                        <p className="live-pred-wall-item__oi muted small">
-                          CE OI {Number(w.ce_oi).toLocaleString()} (Δ {Number(w.ce_oi_change) >= 0 ? "+" : ""}
-                          {Number(w.ce_oi_change).toLocaleString()}) · PE OI {Number(w.pe_oi).toLocaleString()} (Δ{" "}
-                          {Number(w.pe_oi_change) >= 0 ? "+" : ""}
-                          {Number(w.pe_oi_change).toLocaleString()})
-                        </p>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
-          )}
+            )}
 
           <div className="oi-legs">
             <div className="oi-leg oi-leg--ce">
