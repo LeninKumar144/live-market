@@ -1087,6 +1087,212 @@
   border-color: rgba(241, 196, 15, 0.3);
 }
 
+/* Opening session bias — three phase cards */
+.osess {
+  margin: 0 0 1.25rem;
+  padding: 1rem 1.15rem;
+  border-radius: 14px;
+  background: linear-gradient(160deg, rgba(34, 197, 94, 0.06) 0%, rgba(255, 255, 255, 0.03) 45%, rgba(239, 68, 68, 0.05) 100%);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+}
+
+.osess__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.45rem;
+}
+
+.osess__title {
+  margin: 0;
+  font-size: 1.08rem;
+  font-weight: 700;
+}
+
+.osess__sub {
+  margin: 0.35rem 0 0;
+  max-width: 42rem;
+  line-height: 1.45;
+}
+
+.osess__disclaimer {
+  margin: 0 0 0.85rem;
+  font-size: 0.78rem;
+  opacity: 0.85;
+}
+
+.osess-pill {
+  display: inline-block;
+  max-width: 22rem;
+  padding: 0.4rem 0.75rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 650;
+  line-height: 1.35;
+  border: 1px solid transparent;
+}
+
+.osess-pill--up {
+  background: rgba(34, 197, 94, 0.15);
+  color: #4ade80;
+  border-color: rgba(34, 197, 94, 0.35);
+}
+
+.osess-pill--dn {
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+  border-color: rgba(239, 68, 68, 0.35);
+}
+
+.osess-pill--range {
+  background: rgba(56, 189, 248, 0.12);
+  color: #7dd3fc;
+  border-color: rgba(56, 189, 248, 0.3);
+}
+
+.osess-pill--mixed {
+  background: rgba(251, 191, 36, 0.12);
+  color: #fbbf24;
+  border-color: rgba(251, 191, 36, 0.3);
+}
+
+.osess-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.85rem;
+  margin-bottom: 0.75rem;
+}
+
+@media (max-width: 960px) {
+  .osess-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.osess-card {
+  padding: 0.75rem 0.85rem;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.22);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  opacity: 0.82;
+  transition: opacity 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.osess-card--active {
+  opacity: 1;
+  border-color: rgba(74, 222, 128, 0.45);
+  box-shadow: 0 0 0 1px rgba(74, 222, 128, 0.12);
+}
+
+.osess-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.35rem;
+}
+
+.osess-card__phase {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #94a3b8;
+}
+
+.osess-card__live {
+  font-size: 0.68rem;
+  font-weight: 650;
+  padding: 0.15rem 0.45rem;
+  border-radius: 6px;
+  background: rgba(74, 222, 128, 0.18);
+  color: #86efac;
+}
+
+.osess-card__blurb {
+  margin: 0 0 0.55rem;
+  font-size: 0.78rem;
+  color: #9aa4b2;
+  line-height: 1.4;
+}
+
+.osess-stats {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 0.84rem;
+}
+
+.osess-stats li {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.28rem 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.osess-stats li:last-child {
+  border-bottom: none;
+}
+
+.osess-stats span {
+  color: #8b95a8;
+  flex-shrink: 0;
+}
+
+.osess-stats strong {
+  text-align: right;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.osess-stats strong.up {
+  color: #4ade80;
+}
+
+.osess-stats strong.dn {
+  color: #f87171;
+}
+
+.osess-stats .up {
+  color: #4ade80;
+}
+
+.osess-stats .dn {
+  color: #f87171;
+}
+
+.osess-or {
+  margin-top: 0.65rem;
+  padding-top: 0.55rem;
+  border-top: 1px dashed rgba(255, 255, 255, 0.08);
+}
+
+.osess-or__title {
+  margin: 0 0 0.35rem;
+  font-size: 0.72rem;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #7c8798;
+}
+
+.osess-narrative {
+  margin: 0.25rem 0 0;
+  padding: 0.65rem 0.85rem 0.65rem 1.4rem;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.18);
+  font-size: 0.86rem;
+  line-height: 1.45;
+  color: #c5cdd8;
+}
+
+.osess-narrative li + li {
+  margin-top: 0.35rem;
+}
+
 /* Live trend + wall-break prediction widget */
 .live-pred-card {
   margin: 0 0 1.25rem;

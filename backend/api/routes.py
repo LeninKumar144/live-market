@@ -13,17 +13,24 @@ from models.schemas import (
     HedgingResponse,
     HedgingStrategyBlock,
     HistoryResponse,
+    IndiaVixOut,
     LegSuggestionOut,
     LivePredictionOut,
     NiftyFutureQuoteOut,
     OiFutureChartResponse,
     OiFutureChartTradePlanOut,
     OIStatusResponse,
+    OpeningGapOut,
+    OpeningRangeOut,
+    OpeningSessionFutureTrendOut,
+    OpeningSessionOut,
     OpeningWindowBlockOut,
     OpeningWindowHistoryRowOut,
     OpeningWindowProvisionalOut,
     OpeningWindowSnapshotOut,
     OpeningWindowTodayOut,
+    OvernightWallsOut,
+    SessionDoiVs915Out,
     SessionMovePredictionOut,
     SRLevelsBundle,
     SignalOut,
@@ -166,6 +173,60 @@ def _coerce_live_prediction(raw: object) -> LivePredictionOut | None:
         return None
 
 
+def _coerce_india_vix(raw: object) -> IndiaVixOut | None:
+    if not isinstance(raw, dict):
+        return None
+    try:
+        ltp = raw.get("ltp")
+        return IndiaVixOut(
+            symbol=str(raw.get("symbol") or "India VIX"),
+            instrument_key=str(raw.get("instrument_key") or ""),
+            ltp=float(ltp) if ltp is not None else None,
+            net_change=float(raw["net_change"]) if raw.get("net_change") is not None else None,
+            ohlc_open=float(raw["ohlc_open"]) if raw.get("ohlc_open") is not None else None,
+            ohlc_close=float(raw["ohlc_close"]) if raw.get("ohlc_close") is not None else None,
+        )
+    except Exception:
+        return None
+
+
+def _coerce_opening_session(raw: object) -> OpeningSessionOut | None:
+    if not isinstance(raw, dict):
+        return None
+    try:
+        gap = raw.get("gap") if isinstance(raw.get("gap"), dict) else {}
+        walls = raw.get("overnight_walls") if isinstance(raw.get("overnight_walls"), dict) else {}
+        or5 = raw.get("opening_range_5m") if isinstance(raw.get("opening_range_5m"), dict) else {}
+        or15 = raw.get("opening_range_15m") if isinstance(raw.get("opening_range_15m"), dict) else {}
+        ft = raw.get("future_trend") if isinstance(raw.get("future_trend"), dict) else {}
+        doi = raw.get("session_doi_vs_915") if isinstance(raw.get("session_doi_vs_915"), dict) else {}
+        p5 = raw.get("price_vs_or_5m") if isinstance(raw.get("price_vs_or_5m"), dict) else {}
+        p15 = raw.get("price_vs_or_15m") if isinstance(raw.get("price_vs_or_15m"), dict) else {}
+        gift = raw.get("gift_nifty") if isinstance(raw.get("gift_nifty"), dict) else {}
+        return OpeningSessionOut(
+            disclaimer=str(raw.get("disclaimer") or ""),
+            phase=str(raw.get("phase") or ""),
+            phase_label=str(raw.get("phase_label") or ""),
+            as_of=str(raw.get("as_of") or ""),
+            bias_key=str(raw.get("bias_key") or ""),
+            headline=str(raw.get("headline") or ""),
+            detail_lines=list(raw.get("detail_lines") or []),
+            gap=OpeningGapOut(**gap) if gap else OpeningGapOut(),
+            overnight_walls=OvernightWallsOut(**walls) if walls else OvernightWallsOut(),
+            india_vix=_coerce_india_vix(raw.get("india_vix")),
+            opening_range_5m=OpeningRangeOut(**or5) if or5 else OpeningRangeOut(minutes=5),
+            opening_range_15m=OpeningRangeOut(**or15) if or15 else OpeningRangeOut(minutes=15),
+            price_vs_or_5m={str(k): str(v) for k, v in p5.items()},
+            price_vs_or_15m={str(k): str(v) for k, v in p15.items()},
+            future_trend=OpeningSessionFutureTrendOut(**ft) if ft else OpeningSessionFutureTrendOut(),
+            session_doi_vs_915=SessionDoiVs915Out(**doi) if doi else SessionDoiVs915Out(),
+            gift_nifty=gift,
+        )
+    except Exception:
+        logger.debug("Skipping invalid opening_session payload", exc_info=True)
+        return None
+
+
 def _coerce_opening_provisional(raw: object) -> OpeningWindowProvisionalOut | None:
     if not isinstance(raw, dict):
         return None
@@ -264,6 +325,8 @@ def _oi_status_from_cache() -> OIStatusResponse:
         nifty_future=_coerce_nifty_future(c.get("nifty_future")),
         opening_window=_coerce_opening_window(c),
         live_prediction=_coerce_live_prediction(c.get("live_prediction")),
+        opening_session=_coerce_opening_session(c.get("opening_session")),
+        india_vix=_coerce_india_vix(c.get("india_vix")),
         auto_update_enabled=oi_auto_update_enabled(),
         update_interval_seconds=oi_update_interval_seconds(),
     )

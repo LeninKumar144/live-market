@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -181,6 +183,89 @@ class SessionMovePredictionOut(BaseModel):
     detail_lines: list[str] = Field(default_factory=list)
 
 
+class OpeningGapOut(BaseModel):
+    open: float | None = None
+    prev_close: float | None = None
+    ltp: float | None = None
+    gap_points: float | None = None
+    gap_pct: float | None = None
+    direction: str = "unknown"
+    label: str = ""
+
+
+class OpeningRangeOut(BaseModel):
+    minutes: int = 15
+    ready: bool = False
+    complete: bool = False
+    bar_count: int = 0
+    high: float | None = None
+    low: float | None = None
+    open: float | None = None
+    close: float | None = None
+    mid: float | None = None
+    range_points: float | None = None
+    close_position: str = "unknown"
+
+
+class OvernightWallsOut(BaseModel):
+    zone: str = "unknown"
+    label: str = ""
+    support_strike: int | None = None
+    resistance_strike: int | None = None
+    ref_price: float | None = None
+    pcr: float | None = None
+    note: str = ""
+
+
+class IndiaVixOut(BaseModel):
+    symbol: str = "India VIX"
+    instrument_key: str = ""
+    ltp: float | None = None
+    net_change: float | None = None
+    ohlc_open: float | None = None
+    ohlc_close: float | None = None
+
+
+class SessionDoiVs915Out(BaseModel):
+    available: bool = False
+    ce_doi: int | None = None
+    pe_doi: int | None = None
+    net_ce_minus_pe: int | None = None
+    bias: str = ""
+    label: str = ""
+    early_ce_oi: int | None = None
+    early_pe_oi: int | None = None
+
+
+class OpeningSessionFutureTrendOut(BaseModel):
+    trend_key: str = ""
+    trend_label: str = ""
+    is_provisional: bool = False
+    ready: bool = False
+
+
+class OpeningSessionOut(BaseModel):
+    """Three-phase open bias: pre-open / forming OR / post 09:30."""
+
+    disclaimer: str = ""
+    phase: str = Field("", description="pre_open | forming_or | post_or | after_hours")
+    phase_label: str = ""
+    as_of: str = ""
+    bias_key: str = ""
+    headline: str = ""
+    detail_lines: list[str] = Field(default_factory=list)
+    gap: OpeningGapOut = Field(default_factory=OpeningGapOut)
+    overnight_walls: OvernightWallsOut = Field(default_factory=OvernightWallsOut)
+    india_vix: IndiaVixOut | None = None
+    opening_range_5m: OpeningRangeOut = Field(default_factory=OpeningRangeOut)
+    opening_range_15m: OpeningRangeOut = Field(default_factory=OpeningRangeOut)
+    price_vs_or_5m: dict[str, str] = Field(default_factory=dict)
+    price_vs_or_15m: dict[str, str] = Field(default_factory=dict)
+    future_trend: OpeningSessionFutureTrendOut = Field(default_factory=OpeningSessionFutureTrendOut)
+    session_doi_vs_915: SessionDoiVs915Out = Field(default_factory=SessionDoiVs915Out)
+    gift_nifty: dict[str, Any] = Field(default_factory=dict)
+
+
 class LivePredictionOut(BaseModel):
     """Live OI-based read: opening future trend + intraday wall break hints + session lean."""
 
@@ -234,6 +319,14 @@ class OIStatusResponse(BaseModel):
     live_prediction: LivePredictionOut | None = Field(
         None,
         description="Live opening-window trend + option ΔOI vs OI walls + session bias (refreshed each chain poll)",
+    )
+    opening_session: OpeningSessionOut | None = Field(
+        None,
+        description="Pre-open / 0–15m / post-09:30 bias: gap, VIX, OR, ΔOI vs 09:15",
+    )
+    india_vix: IndiaVixOut | None = Field(
+        None,
+        description="India VIX quote when available from Upstox",
     )
     auto_update_enabled: bool = True
     update_interval_seconds: float = 60

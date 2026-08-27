@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api/client.js";
 import SRLevelsPanel from "../components/SRLevelsPanel.jsx";
+import OpeningSessionCards from "../components/OpeningSessionCards.jsx";
 import { OiFutureChartWithDetails, OiFutureTradePlanOnly } from "../components/OiFutureChartWidgets.jsx";
 import "./Home.css";
 
@@ -358,6 +359,22 @@ export default function Home() {
             {oi.pcr != null && (
               <span className="pill pill--muted">PCR {Number(oi.pcr).toFixed(4)}</span>
             )}
+            {oi.india_vix?.ltp != null && (
+              <span className="pill pill--muted" title="India VIX from Upstox">
+                VIX {Number(oi.india_vix.ltp).toFixed(2)}
+                {oi.india_vix.net_change != null
+                  ? ` (${Number(oi.india_vix.net_change) >= 0 ? "+" : ""}${Number(oi.india_vix.net_change).toFixed(2)})`
+                  : ""}
+              </span>
+            )}
+            {oi.opening_session?.gap?.label && (
+              <span
+                className="pill pill--muted"
+                title="Future session open vs previous close"
+              >
+                {oi.opening_session.gap.label}
+              </span>
+            )}
             {oi.total_call_oi != null && (
               <span className="pill pill--muted">Σ CE OI {(oi.total_call_oi / 1e5).toFixed(2)}L</span>
             )}
@@ -440,6 +457,13 @@ export default function Home() {
                     H {oi.nifty_future.ohlc_high != null ? Number(oi.nifty_future.ohlc_high).toFixed(2) : "—"}{" "}
                     L {oi.nifty_future.ohlc_low != null ? Number(oi.nifty_future.ohlc_low).toFixed(2) : "—"}{" "}
                     C {oi.nifty_future.ohlc_close != null ? Number(oi.nifty_future.ohlc_close).toFixed(2) : "—"}
+                    {oi.opening_session?.gap?.gap_points != null && (
+                      <>
+                        {" "}
+                        · Gap {Number(oi.opening_session.gap.gap_points) >= 0 ? "+" : ""}
+                        {Number(oi.opening_session.gap.gap_points).toFixed(1)} vs prev close
+                      </>
+                    )}
                   </p>
                 )}
               </div>
@@ -451,16 +475,17 @@ export default function Home() {
             <OiFutureTradePlanOnly fc={futureChart} />
           </div>
 
+          <OpeningSessionCards session={oi.opening_session} />
+
           {oi.live_prediction && (
             <div className="live-pred-card">
               <div className="live-pred-card__head">
                 <div>
                   <h3 className="live-pred-card__title">Live trend &amp; level-break read</h3>
                   <p className="muted small live-pred-card__sub">
-                    Refreshes with every option-chain poll. Future trend = 09:15–09:30 IST (OI + price). Walls = intraday
-                    CE/PE OI vs <strong>ΔOI only</strong> at OI support / resistance strikes. Σ CE/PE{" "}
-                    <strong>Δ volume</strong> = change in summed chain volume since the previous successful refresh (first
-                    poll after startup shows —).
+                    Intraday wall break + full-chain ΔOI (vs prev close). For open / first-15m bias see{" "}
+                    <strong>Opening session bias</strong> above (gap, VIX, OR, ΔOI vs 09:15). Future trend =
+                    09:15–09:30 IST. Σ CE/PE <strong>Δ volume</strong> = since previous refresh.
                   </p>
                 </div>
                 {oi.live_prediction.session_move?.bias_key ? (

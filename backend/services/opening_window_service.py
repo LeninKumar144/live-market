@@ -197,6 +197,7 @@ def record_future_snapshot(
             "ready": ready,
             "now_is_before_930": t < WIN_END,
             "provisional": provisional,
+            "chain_early": sess.get("chain_early") if isinstance(sess.get("chain_early"), dict) else None,
         }
 
 
@@ -224,6 +225,7 @@ def today_payload_from_store(project_root: Path) -> dict[str, Any] | None:
             "ready": False,
             "now_is_before_930": now.time() < WIN_END,
             "provisional": None,
+            "chain_early": None,
         }
     early = sess.get("early") if isinstance(sess.get("early"), dict) else None
     late = sess.get("late") if isinstance(sess.get("late"), dict) else None
@@ -237,6 +239,7 @@ def today_payload_from_store(project_root: Path) -> dict[str, Any] | None:
         d_oi = int(late["oi"]) - int(early["oi"])
         trend_key, trend_label = _classify_trend(d_ltp, d_oi)
 
+    chain_early = sess.get("chain_early") if isinstance(sess.get("chain_early"), dict) else None
     return {
         "date": day_key,
         "early": early,
@@ -248,6 +251,7 @@ def today_payload_from_store(project_root: Path) -> dict[str, Any] | None:
         "ready": ready,
         "now_is_before_930": now.time() < WIN_END,
         "provisional": None,
+        "chain_early": chain_early,
     }
 
 
@@ -269,6 +273,87 @@ def merge_provisional_into_today(today_dict: dict[str, Any], future_ltp: float |
         today_dict["provisional"] = prov
     else:
         today_dict.pop("provisional", None)
+
+
+def record_chain_early_anchor(
+    project_root: Path,
+    *,
+    when: datetime | None = None,
+    total_ce_oi: int,
+    total_pe_oi: int,
+    total_ce_volume: int = 0,
+    total_pe_volume: int = 0,
+    pcr: float | None = None,
+    spot: float = 0.0,
+    support_strike: int | None = None,
+    resistance_strike: int | None = None,
+) -> dict[str, Any] | None:
+    """
+    Persist first option-chain totals inside 09:15–09:30 for session ΔOI vs 09:15.
+
+    Returns the stored chain_early dict (existing or newly written).
+    """
+    now = when or datetime.now(IST)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=IST)
+    else:
+        now = now.astimezone(IST)
+
+    t = now.time()
+    if not (WIN_START <= t < WIN_END):
+        # Outside window: return existing anchor if present
+        day_key = now.date().isoformat()
+        path = opening_window_json_path(project_root)
+        with _lock:
+            store = _load(path)
+            sess = store.get("by_date", {}).get(day_key)
+            if isinstance(sess, dict) and isinstance(sess.get("chain_early"), dict):
+                return sess["chain_early"]
+        return None
+
+    day_key = now.date().isoformat()
+    iso = now.isoformat()
+    path = opening_window_json_path(project_root)
+
+    with _lock:
+        store = _load(path)
+        by_date: dict[str, Any] = store["by_date"]
+        sess = _reset_session_if_window_migrated(by_date.get(day_key))
+        by_date[day_key] = sess
+
+        if "chain_early" not in sess:
+            sess["chain_early"] = {
+                "at": iso,
+                "total_ce_oi": int(total_ce_oi),
+                "total_pe_oi": int(total_pe_oi),
+                "total_ce_volume": int(total_ce_volume),
+                "total_pe_volume": int(total_pe_volume),
+                "pcr": float(pcr) if pcr is not None else None,
+                "spot": float(spot),
+                "support_strike": support_strike,
+                "resistance_strike": resistance_strike,
+            }
+            try:
+                _save(path, store)
+            except OSError as e:
+                logger.warning("Opening window chain_early save failed: %s", e)
+
+        return sess.get("chain_early") if isinstance(sess.get("chain_early"), dict) else None
+
+
+def attach_chain_early_to_today(today_dict: dict[str, Any], project_root: Path) -> None:
+    """Ensure today's opening_window payload includes chain_early from the JSON store."""
+    if not isinstance(today_dict, dict):
+        return
+    if isinstance(today_dict.get("chain_early"), dict):
+        return
+    day_key = str(today_dict.get("date") or datetime.now(IST).date().isoformat())
+    path = opening_window_json_path(project_root)
+    with _lock:
+        store = _load(path)
+    sess = store.get("by_date", {}).get(day_key)
+    if isinstance(sess, dict) and isinstance(sess.get("chain_early"), dict):
+        today_dict["chain_early"] = sess["chain_early"]
 
 
 def build_history_rows(project_root: Path, limit: int = 30) -> list[dict[str, Any]]:

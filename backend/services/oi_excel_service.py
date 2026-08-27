@@ -68,6 +68,8 @@ _cache: dict[str, Any] = {
     "excel_export_error": None,
     "sr_levels": None,
     "live_prediction": None,
+    "opening_session": None,
+    "india_vix": None,
 }
 
 
@@ -169,6 +171,8 @@ def run_oi_excel_cycle() -> None:
     sr_bundle: dict[str, Any] | None = None
     nifty_future_payload: dict[str, Any] | None = None
     opening_today: dict[str, Any] | None = None
+    india_vix_payload: dict[str, Any] | None = None
+    future_1m_bars: list[Any] = []
     try:
         client = UpstoxClient(settings, params)
         expiry = client.resolve_expiry(settings.option_expiry_date)
@@ -206,36 +210,58 @@ def run_oi_excel_cycle() -> None:
             except UpstoxAPIError as e:
                 logger.debug("NIFTY index future lookup skipped: %s", e)
 
-        if fut_key:
+        vix_key = "NSE_INDEX|India VIX"
+        quote_keys = [k for k in (fut_key, vix_key) if k]
+        if quote_keys:
             try:
                 from services.opening_window_service import record_future_snapshot
 
-                raw_q = client.fetch_market_quotes([fut_key])
+                raw_q = client.fetch_market_quotes(quote_keys)
                 qmap = _quote_key_map(raw_q)
-                q = qmap.get(fut_key)
-                if q and isinstance(q, dict):
-                    ohlc = q.get("ohlc") or {}
-                    nc = q.get("net_change")
-                    nifty_future_payload = {
-                        "symbol": str(q.get("symbol") or fut_sym or ""),
-                        "instrument_key": fut_key,
-                        "ltp": float(q.get("last_price") or 0.0),
-                        "oi": int(q.get("oi") or 0),
-                        "volume": int(q.get("volume") or 0),
-                        "net_change": float(nc) if nc is not None else None,
-                        "ohlc_open": float(ohlc["open"]) if ohlc.get("open") is not None else None,
-                        "ohlc_high": float(ohlc["high"]) if ohlc.get("high") is not None else None,
-                        "ohlc_low": float(ohlc["low"]) if ohlc.get("low") is not None else None,
-                        "ohlc_close": float(ohlc["close"]) if ohlc.get("close") is not None else None,
+                if fut_key:
+                    q = qmap.get(fut_key)
+                    if q and isinstance(q, dict):
+                        ohlc = q.get("ohlc") or {}
+                        nc = q.get("net_change")
+                        nifty_future_payload = {
+                            "symbol": str(q.get("symbol") or fut_sym or ""),
+                            "instrument_key": fut_key,
+                            "ltp": float(q.get("last_price") or 0.0),
+                            "oi": int(q.get("oi") or 0),
+                            "volume": int(q.get("volume") or 0),
+                            "net_change": float(nc) if nc is not None else None,
+                            "ohlc_open": float(ohlc["open"]) if ohlc.get("open") is not None else None,
+                            "ohlc_high": float(ohlc["high"]) if ohlc.get("high") is not None else None,
+                            "ohlc_low": float(ohlc["low"]) if ohlc.get("low") is not None else None,
+                            "ohlc_close": float(ohlc["close"]) if ohlc.get("close") is not None else None,
+                        }
+                        opening_today = record_future_snapshot(
+                            PROJECT_ROOT,
+                            ltp=nifty_future_payload["ltp"],
+                            oi=nifty_future_payload["oi"],
+                            symbol=nifty_future_payload["symbol"],
+                        )
+                vq = qmap.get(vix_key)
+                if vq and isinstance(vq, dict):
+                    vohlc = vq.get("ohlc") or {}
+                    vnc = vq.get("net_change")
+                    india_vix_payload = {
+                        "symbol": str(vq.get("symbol") or "India VIX"),
+                        "instrument_key": vix_key,
+                        "ltp": float(vq.get("last_price") or 0.0),
+                        "net_change": float(vnc) if vnc is not None else None,
+                        "ohlc_open": float(vohlc["open"]) if vohlc.get("open") is not None else None,
+                        "ohlc_close": float(vohlc["close"]) if vohlc.get("close") is not None else None,
                     }
-                    opening_today = record_future_snapshot(
-                        PROJECT_ROOT,
-                        ltp=nifty_future_payload["ltp"],
-                        oi=nifty_future_payload["oi"],
-                        symbol=nifty_future_payload["symbol"],
-                    )
             except Exception as e:
-                logger.warning("NIFTY future quote / opening window: %s", e)
+                logger.warning("NIFTY future / VIX quote / opening window: %s", e)
+
+        if fut_key:
+            try:
+                future_1m_bars = client.fetch_1minute_candles(fut_key)
+            except Exception as e:
+                logger.debug("Future 1m bars for opening range skipped: %s", e)
+                future_1m_bars = []
     except UpstoxAPIError as e:
         logger.warning("Upstox option chain failed: %s", e)
         with _lock:
@@ -405,13 +431,48 @@ def run_oi_excel_cycle() -> None:
     hist_df = pd.concat([hist_df, hist_row], ignore_index=True).tail(oi_history_max_rows())
 
     updated_iso = datetime.now(IST).isoformat()
+    hist_rows: list[Any] = []
     try:
-        from services.opening_window_service import build_history_rows
+        from services.opening_window_service import (
+            attach_chain_early_to_today,
+            build_history_rows,
+            record_chain_early_anchor,
+            today_payload_from_store,
+        )
 
         hist_rows = build_history_rows(PROJECT_ROOT, limit=30)
+
+        # First chain totals inside 09:15–09:30 → session ΔOI vs 09:15
+        top_s = None
+        top_r = None
+        if isinstance(sr_bundle, dict):
+            intr = sr_bundle.get("intraday") or {}
+            sups = intr.get("supports") or []
+            ress = intr.get("resistances") or []
+            if sups and isinstance(sups[0], dict):
+                top_s = int(sups[0].get("strike") or 0) or None
+            if ress and isinstance(ress[0], dict):
+                top_r = int(ress[0].get("strike") or 0) or None
+        chain_early = record_chain_early_anchor(
+            PROJECT_ROOT,
+            total_ce_oi=total_ce,
+            total_pe_oi=total_pe,
+            total_ce_volume=total_ce_vol,
+            total_pe_volume=total_pe_vol,
+            pcr=pcr,
+            spot=spot,
+            support_strike=top_s,
+            resistance_strike=top_r,
+        )
+        if opening_today is None:
+            opening_today = today_payload_from_store(PROJECT_ROOT)
+        if isinstance(opening_today, dict):
+            if chain_early:
+                opening_today["chain_early"] = chain_early
+            else:
+                attach_chain_early_to_today(opening_today, PROJECT_ROOT)
     except Exception as e:
-        logger.debug("opening_window history: %s", e)
-        hist_rows = []
+        logger.debug("opening_window / chain_early: %s", e)
 
     live_prediction: dict[str, Any] | None = None
     try:
@@ -425,6 +486,24 @@ def run_oi_excel_cycle() -> None:
         )
     except Exception as e:
         logger.debug("live_prediction skipped: %s", e)
+
+    opening_session: dict[str, Any] | None = None
+    try:
+        from analysis.opening_session import build_opening_session
+
+        opening_session = build_opening_session(
+            spot=spot,
+            pcr=pcr,
+            total_ce_oi=total_ce,
+            total_pe_oi=total_pe,
+            nifty_future=nifty_future_payload,
+            opening_window_today=opening_today,
+            sr_bundle=sr_bundle,
+            future_1m_bars=future_1m_bars,
+            india_vix=india_vix_payload,
+        )
+    except Exception as e:
+        logger.debug("opening_session skipped: %s", e)
 
     vol_d_ce: int | None = None
     vol_d_pe: int | None = None
@@ -473,6 +552,8 @@ def run_oi_excel_cycle() -> None:
             "diagonal_long_expiry_iso": long_iso,
             "sr_levels": sr_bundle,
             "live_prediction": live_prediction,
+            "opening_session": opening_session,
+            "india_vix": india_vix_payload,
             "opening_window_history": hist_rows,
         }
         if nifty_future_payload is not None:
