@@ -15,25 +15,22 @@ from analysis.hedging_engine import build_hedging_payload
 from analysis.strategy_pnl import enrich_hedging_payload, nifty_option_lot_size
 
 from services.oi_excel_service import get_oi_cache_snapshot
-from services.signals_source import load_all_signals
 
 
-def _strike_step() -> int:
+def get_hedging_response(segment: str = "nifty") -> dict[str, Any]:
+    from config.segments import get_segment
+    from services.signals_source import load_all_signals
+
+    sid = (segment or "nifty").strip().lower()
     try:
-        import yaml
+        seg = get_segment(sid)
+        strike_step = int(seg.strike_step)
+        lot_size = int(seg.option_lot_size)
+    except KeyError:
+        strike_step = 50
+        lot_size = nifty_option_lot_size()
 
-        p = PROJECT_ROOT / "config" / "analysis.yaml"
-        if not p.is_file():
-            return 50
-        with p.open(encoding="utf-8") as f:
-            y = yaml.safe_load(f) or {}
-        return int(y.get("strike_step", 50))
-    except Exception:
-        return 50
-
-
-def get_hedging_response() -> dict[str, Any]:
-    oi = get_oi_cache_snapshot()
+    oi = get_oi_cache_snapshot(sid)
     rows, _src = load_all_signals()
     recent_types = [str(r.get("type") or "") for r in rows[:25]]
 
@@ -51,7 +48,7 @@ def get_hedging_response() -> dict[str, Any]:
 
     raw = build_hedging_payload(
         spot=spot,
-        strike_step=_strike_step(),
+        strike_step=strike_step,
         pcr=float(pcr) if pcr is not None else None,
         market_direction=mdir,
         market_delta_pct=dpc,
@@ -65,11 +62,10 @@ def get_hedging_response() -> dict[str, Any]:
     chain = oi.get("chain_ltp")
     if not isinstance(chain, dict):
         chain = {}
-    step = _strike_step()
     return enrich_hedging_payload(
         raw,
         chain,
-        nifty_option_lot_size(),
-        strike_step=step,
+        lot_size,
+        strike_step=strike_step,
         spot=spot,
     )

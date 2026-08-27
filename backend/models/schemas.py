@@ -279,6 +279,19 @@ class LivePredictionOut(BaseModel):
     session_move: SessionMovePredictionOut = Field(default_factory=SessionMovePredictionOut)
 
 
+class SegmentMetaOut(BaseModel):
+    """Public segment labels for dashboard nav / titles."""
+
+    id: str = ""
+    display_name: str = ""
+    short_label: str = ""
+    strike_step: int = 50
+    show_india_vix: bool = True
+    show_gift_note: bool = False
+    route_path: str = ""
+    instrument_key: str = ""
+
+
 class OIStatusResponse(BaseModel):
     ok: bool = Field(description="True when a successful chain snapshot is cached")
     error: str | None = None
@@ -288,6 +301,10 @@ class OIStatusResponse(BaseModel):
     )
     updated_at: str | None = Field(None, description="ISO timestamp of last successful refresh")
     excel_path: str | None = Field(None, description="Workbook path (CE/PE OI updated on interval)")
+    segment: str | None = Field(None, description="Underlying segment id (nifty, banknifty, …)")
+    segment_meta: SegmentMetaOut | None = Field(
+        None, description="Display labels / flags for this segment"
+    )
     spot: float = 0
     expiry: str = ""
     pcr: float | None = None
@@ -310,7 +327,7 @@ class OIStatusResponse(BaseModel):
     )
     nifty_future: NiftyFutureQuoteOut | None = Field(
         None,
-        description="Current NIFTY index future LTP, OI, session OHLC (same cycle as option chain)",
+        description="Current segment future LTP, OI, session OHLC (same cycle as option chain)",
     )
     opening_window: OpeningWindowBlockOut | None = Field(
         None,

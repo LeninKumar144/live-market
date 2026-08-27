@@ -64,7 +64,7 @@ function OrBlock({ title, orBlock, vsOr }) {
   );
 }
 
-export default function OpeningSessionCards({ session }) {
+export default function OpeningSessionCards({ session, showGift = true }) {
   if (!session) return null;
   const phase = session.phase || "";
   const gap = session.gap || {};
@@ -142,7 +142,13 @@ export default function OpeningSessionCards({ session }) {
             </li>
             <li>
               <span>GIFT Nifty</span>
-              <strong className="muted">{gift.available ? "—" : gift.note || "Not wired"}</strong>
+              <strong className="muted">
+                {!showGift
+                  ? "—"
+                  : gift.available
+                    ? "—"
+                    : gift.note || "Not wired"}
+              </strong>
             </li>
           </ul>
         </article>

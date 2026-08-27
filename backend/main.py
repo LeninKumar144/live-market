@@ -23,7 +23,7 @@ from api.routes import router
 from services.oi_excel_service import (
     oi_auto_update_enabled,
     oi_update_interval_seconds,
-    run_oi_excel_cycle,
+    run_all_oi_excel_cycles,
 )
 
 logger = logging.getLogger(__name__)
@@ -40,7 +40,7 @@ async def lifespan(app: FastAPI):
             await asyncio.sleep(2)
             while True:
                 try:
-                    await asyncio.to_thread(run_oi_excel_cycle)
+                    await asyncio.to_thread(run_all_oi_excel_cycles)
                 except Exception:
                     logger.exception("Background OI Excel update failed")
                 await asyncio.sleep(oi_update_interval_seconds())
@@ -71,10 +71,11 @@ def root() -> dict:
         "docs": "/docs",
         "signals": "/signals",
         "history": "/history",
-        "oi_status": "/oi/status",
-        "oi_refresh": "POST /oi/refresh",
-        "oi_future_chart": "/oi/future-chart (1m future candles + OI/PCR/ΔOI synthesis)",
-        "hedging": "/hedging (intraday, weekly, monthly, iron_condor, diagonal + rollover)",
+        "segments": "/segments",
+        "oi_status": "/oi/{segment}/status (alias: /oi/status → nifty)",
+        "oi_refresh": "POST /oi/{segment}/refresh",
+        "oi_future_chart": "/oi/{segment}/future-chart",
+        "hedging": "/hedging/{segment} (alias: /hedging → nifty)",
         "stock_options_liquidity": "/stock-options/liquidity (NSE F&O liquidity guide)",
         "stock_options_live": "/stock-options/live (live CE/PE + OI, Upstox)",
     }

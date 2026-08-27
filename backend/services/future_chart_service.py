@@ -1,4 +1,4 @@
-"""Cached NIFTY future 1m candles + OI/PCR/ΔOI/Δvol synthesis for the dashboard chart."""
+"""Cached future 1m candles + OI/PCR/ΔOI/Δvol synthesis for the dashboard chart."""
 
 from __future__ import annotations
 
@@ -30,11 +30,12 @@ def _plan_and_candles_from_snap(
     day: Any,
     bars: list[Any],
     chart_warning: str | None,
+    short_label: str = "NIFTY",
 ) -> dict[str, Any]:
     from analysis.oi_future_synthesis import build_trade_plan
 
     nf = snap.get("nifty_future") if isinstance(snap.get("nifty_future"), dict) else None
-    sym = str((nf or {}).get("symbol") or "NIFTY FUT")
+    sym = str((nf or {}).get("symbol") or f"{short_label} FUT")
     ltp = float((nf or {}).get("ltp") or 0.0)
     spot = float(snap.get("spot") or 0.0)
 
@@ -137,20 +138,27 @@ def _plan_and_candles_from_snap(
     }
 
 
-def get_future_chart_payload() -> dict[str, Any]:
+def get_future_chart_payload(segment: str = "nifty") -> dict[str, Any]:
     from analysis.oi_future_synthesis import bars_from_tuples
+    from config.segments import get_segment
     from config.settings import get_settings, load_analysis_parameters
     from data.upstox_client import UpstoxClient
     from pydantic import ValidationError
 
     from services.oi_excel_service import get_oi_cache_snapshot
 
-    snap = get_oi_cache_snapshot()
+    sid = (segment or "nifty").strip().lower()
+    try:
+        short_label = get_segment(sid).short_label
+    except KeyError:
+        short_label = sid.upper()
+
+    snap = get_oi_cache_snapshot(sid)
     nf = snap.get("nifty_future") if isinstance(snap.get("nifty_future"), dict) else None
     ik = str((nf or {}).get("instrument_key") or "")
-    sym = str((nf or {}).get("symbol") or "NIFTY FUT")
+    sym = str((nf or {}).get("symbol") or f"{short_label} FUT")
     day = datetime.now(IST).date()
-    cache_key = f"{ik or 'no-future'}:{day.isoformat()}"
+    cache_key = f"{sid}:{ik or 'no-future'}:{day.isoformat()}"
 
     now = time.monotonic()
     with _lock:
@@ -197,7 +205,7 @@ def get_future_chart_payload() -> dict[str, Any]:
             client = UpstoxClient(settings, params)
             rows = client.fetch_1minute_candles(ik, for_day=day)
         except Exception as e:
-            logger.warning("Future chart candle fetch failed: %s", e)
+            logger.warning("Future chart candle fetch failed (%s): %s", sid, e)
             chart_warning = f"1-minute future candles unavailable: {e}"
         finally:
             if client is not None:
@@ -207,7 +215,7 @@ def get_future_chart_payload() -> dict[str, Any]:
                     pass
     else:
         chart_warning = (
-            "NIFTY index future is not in the OI cache — candle chart is skipped. "
+            f"{short_label} future is not in the OI cache — candle chart is skipped. "
             "Entry/exit below uses Σ CE/PE OI, ΔOI, PCR, and live Σ CE/PE volume & Δvol from the option chain. "
             "Use “Refresh OI now” or check Upstox / contract resolution."
         )
@@ -216,7 +224,9 @@ def get_future_chart_payload() -> dict[str, Any]:
     if ik and not chart_warning and not rows:
         chart_warning = "No 1-minute bars returned for this session day (market closed or delayed data)."
 
-    payload = _plan_and_candles_from_snap(snap, ik=ik, day=day, bars=bars, chart_warning=chart_warning)
+    payload = _plan_and_candles_from_snap(
+        snap, ik=ik, day=day, bars=bars, chart_warning=chart_warning, short_label=short_label
+    )
 
     with _lock:
         _cache[cache_key] = {"mono": time.monotonic(), "payload": payload}

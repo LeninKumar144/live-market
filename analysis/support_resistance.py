@@ -98,21 +98,28 @@ def oi_walls_from_rows(rows: list[StrikeRow], spot: float, *, top_n: int = 3) ->
     }
 
 
-def build_sr_bundle(client: Any, chain_expiry_iso: str, primary_rows: list[StrikeRow]) -> dict[str, Any]:
+def build_sr_bundle(
+    client: Any,
+    chain_expiry_iso: str,
+    primary_rows: list[StrikeRow],
+    *,
+    underlying_instrument_key: str | None = None,
+) -> dict[str, Any]:
     """Fetch weekly / monthly chains as needed while `client` is still open."""
     from analysis.expiry_calendar import format_expiry_weekday_day_month
 
     if not primary_rows:
         return {"intraday": None, "weekly": None, "monthly": None}
 
-    exps = client.list_future_expiries()
+    uk = underlying_instrument_key
+    exps = client.list_future_expiries(uk)
     w_iso, m_iso = pick_weekly_monthly_isos(exps, chain_expiry_iso)
     spot_i = float(primary_rows[0].underlying_spot_price or 0.0)
 
     def rows_for(iso: str) -> list[StrikeRow]:
         if iso == chain_expiry_iso:
             return primary_rows
-        return client.fetch_option_chain(iso)
+        return client.fetch_option_chain(iso, underlying_instrument_key=uk)
 
     w_rows = rows_for(w_iso)
     if m_iso == chain_expiry_iso:
@@ -125,7 +132,7 @@ def build_sr_bundle(client: Any, chain_expiry_iso: str, primary_rows: list[Strik
     today = datetime.now(_IST).date()
     lookback = today - timedelta(days=220)
     try:
-        daily_bars = client.fetch_daily_candles(lookback, today)
+        daily_bars = client.fetch_daily_candles(lookback, today, instrument_key=uk)
     except Exception:
         daily_bars = []
 
@@ -136,7 +143,7 @@ def build_sr_bundle(client: Any, chain_expiry_iso: str, primary_rows: list[Strik
     def _pivot_payload(block: dict[str, Any] | None) -> dict[str, Any]:
         if block is None:
             return {
-                "unavailable_reason": "Insufficient NIFTY daily candle history for this timeframe.",
+                "unavailable_reason": "Insufficient daily candle history for this timeframe.",
                 "basis_label": "",
             }
         return block

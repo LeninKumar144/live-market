@@ -31,10 +31,16 @@ WIN_END = time(9, 30, 0)
 WINDOW_ID = "915_930_v1"
 
 
-def opening_window_json_path(project_root: Path) -> Path:
+def opening_window_json_path(project_root: Path, segment: str = "nifty") -> Path:
     out = project_root / "exports"
     out.mkdir(parents=True, exist_ok=True)
-    return out / "nifty_opening_window.json"
+    try:
+        from config.segments import get_segment
+
+        name = get_segment(segment).opening_window_basename
+    except Exception:
+        name = "nifty_opening_window.json" if segment == "nifty" else f"{segment}_opening_window.json"
+    return out / name
 
 
 def _default_store() -> dict[str, Any]:
@@ -122,6 +128,7 @@ def record_future_snapshot(
     ltp: float,
     oi: int,
     symbol: str = "",
+    segment: str = "nifty",
 ) -> dict[str, Any]:
     """
     Record one future quote sample (IST). Updates JSON store and returns a summary for API cache.
@@ -137,7 +144,7 @@ def record_future_snapshot(
     day_key = d.isoformat()
     iso = now.isoformat()
 
-    path = opening_window_json_path(project_root)
+    path = opening_window_json_path(project_root, segment)
 
     with _lock:
         store = _load(path)
@@ -201,7 +208,7 @@ def record_future_snapshot(
         }
 
 
-def today_payload_from_store(project_root: Path) -> dict[str, Any] | None:
+def today_payload_from_store(project_root: Path, segment: str = "nifty") -> dict[str, Any] | None:
     """Rebuild today's opening-window summary from JSON (e.g. after API restart)."""
     now = datetime.now(IST)
     if now.tzinfo is None:
@@ -209,7 +216,7 @@ def today_payload_from_store(project_root: Path) -> dict[str, Any] | None:
     else:
         now = now.astimezone(IST)
     day_key = now.date().isoformat()
-    path = opening_window_json_path(project_root)
+    path = opening_window_json_path(project_root, segment)
     with _lock:
         store = _load(path)
     sess = store.get("by_date", {}).get(day_key)
@@ -287,6 +294,7 @@ def record_chain_early_anchor(
     spot: float = 0.0,
     support_strike: int | None = None,
     resistance_strike: int | None = None,
+    segment: str = "nifty",
 ) -> dict[str, Any] | None:
     """
     Persist first option-chain totals inside 09:15–09:30 for session ΔOI vs 09:15.
@@ -303,7 +311,7 @@ def record_chain_early_anchor(
     if not (WIN_START <= t < WIN_END):
         # Outside window: return existing anchor if present
         day_key = now.date().isoformat()
-        path = opening_window_json_path(project_root)
+        path = opening_window_json_path(project_root, segment)
         with _lock:
             store = _load(path)
             sess = store.get("by_date", {}).get(day_key)
@@ -313,7 +321,7 @@ def record_chain_early_anchor(
 
     day_key = now.date().isoformat()
     iso = now.isoformat()
-    path = opening_window_json_path(project_root)
+    path = opening_window_json_path(project_root, segment)
 
     with _lock:
         store = _load(path)
@@ -341,14 +349,16 @@ def record_chain_early_anchor(
         return sess.get("chain_early") if isinstance(sess.get("chain_early"), dict) else None
 
 
-def attach_chain_early_to_today(today_dict: dict[str, Any], project_root: Path) -> None:
+def attach_chain_early_to_today(
+    today_dict: dict[str, Any], project_root: Path, segment: str = "nifty"
+) -> None:
     """Ensure today's opening_window payload includes chain_early from the JSON store."""
     if not isinstance(today_dict, dict):
         return
     if isinstance(today_dict.get("chain_early"), dict):
         return
     day_key = str(today_dict.get("date") or datetime.now(IST).date().isoformat())
-    path = opening_window_json_path(project_root)
+    path = opening_window_json_path(project_root, segment)
     with _lock:
         store = _load(path)
     sess = store.get("by_date", {}).get(day_key)
@@ -356,9 +366,11 @@ def attach_chain_early_to_today(today_dict: dict[str, Any], project_root: Path) 
         today_dict["chain_early"] = sess["chain_early"]
 
 
-def build_history_rows(project_root: Path, limit: int = 30) -> list[dict[str, Any]]:
+def build_history_rows(
+    project_root: Path, limit: int = 30, segment: str = "nifty"
+) -> list[dict[str, Any]]:
     """Recent days with computed trend (newest first)."""
-    path = opening_window_json_path(project_root)
+    path = opening_window_json_path(project_root, segment)
     with _lock:
         store = _load(path)
     by_date = store.get("by_date") or {}

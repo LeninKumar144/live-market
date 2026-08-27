@@ -1,7 +1,6 @@
 """
-Fetch NIFTY option-chain CE/PE OI, write Excel on an interval, and derive suggested buy strikes.
-
-Uses project-root Upstox client and analysis helpers (sys.path includes parent of backend/).
+Fetch option-chain CE/PE OI per segment (nifty / banknifty / sensex / mcx),
+write Excel on an interval, and derive suggested buy strikes.
 """
 
 from __future__ import annotations
@@ -40,46 +39,75 @@ OI_VS_PRICE_FUTURE_LEGEND = pd.DataFrame(
 )
 
 _lock = threading.Lock()
-_history: deque[Any] = deque(maxlen=32)
-_cache: dict[str, Any] = {
-    "updated_at": None,
-    "excel_path": None,
-    "error": None,
-    "nifty_future": None,
-    "opening_window_today": None,
-    "opening_window_history": [],
-    "spot": 0.0,
-    "expiry": "",
-    "pcr": None,
-    "total_call_oi": None,
-    "total_put_oi": None,
-    "total_call_volume": None,
-    "total_put_volume": None,
-    "buy_ce": None,
-    "buy_pe": None,
-    "market_move_label": "",
-    "market_direction": "flat",
-    "market_delta_pct": None,
-    "chain_ltp": {},
-    "diagonal_short_expiry_display": "",
-    "diagonal_long_expiry_display": "",
-    "diagonal_short_expiry_iso": "",
-    "diagonal_long_expiry_iso": "",
-    "excel_export_error": None,
-    "sr_levels": None,
-    "live_prediction": None,
-    "opening_session": None,
-    "india_vix": None,
-}
+_histories: dict[str, deque[Any]] = {}
+_caches: dict[str, dict[str, Any]] = {}
 
 
-def oi_excel_path() -> Path:
-    raw = os.environ.get("OI_EXCEL_PATH", "").strip()
-    if raw:
-        return Path(raw)
+def _empty_cache() -> dict[str, Any]:
+    return {
+        "updated_at": None,
+        "excel_path": None,
+        "error": None,
+        "segment": "nifty",
+        "segment_meta": None,
+        "nifty_future": None,
+        "opening_window_today": None,
+        "opening_window_history": [],
+        "spot": 0.0,
+        "expiry": "",
+        "pcr": None,
+        "total_call_oi": None,
+        "total_put_oi": None,
+        "total_call_volume": None,
+        "total_put_volume": None,
+        "buy_ce": None,
+        "buy_pe": None,
+        "market_move_label": "",
+        "market_direction": "flat",
+        "market_delta_pct": None,
+        "chain_ltp": {},
+        "diagonal_short_expiry_display": "",
+        "diagonal_long_expiry_display": "",
+        "diagonal_short_expiry_iso": "",
+        "diagonal_long_expiry_iso": "",
+        "excel_export_error": None,
+        "sr_levels": None,
+        "live_prediction": None,
+        "opening_session": None,
+        "india_vix": None,
+    }
+
+
+def _seg_cache(segment: str) -> dict[str, Any]:
+    sid = (segment or "nifty").strip().lower()
+    if sid not in _caches:
+        _caches[sid] = _empty_cache()
+        _caches[sid]["segment"] = sid
+    return _caches[sid]
+
+
+def _seg_history(segment: str) -> deque[Any]:
+    sid = (segment or "nifty").strip().lower()
+    if sid not in _histories:
+        _histories[sid] = deque(maxlen=32)
+    return _histories[sid]
+
+
+def oi_excel_path(segment: str = "nifty") -> Path:
+    sid = (segment or "nifty").strip().lower()
+    if sid == "nifty":
+        raw = os.environ.get("OI_EXCEL_PATH", "").strip()
+        if raw:
+            return Path(raw)
+    try:
+        from config.segments import get_segment
+
+        basename = get_segment(sid).excel_basename
+    except Exception:
+        basename = f"{sid}_oi_live.xlsx"
     out_dir = PROJECT_ROOT / "exports"
     out_dir.mkdir(parents=True, exist_ok=True)
-    return out_dir / "nifty_oi_live.xlsx"
+    return out_dir / basename
 
 
 def oi_update_interval_seconds() -> float:
@@ -125,8 +153,21 @@ def _try_imports():
     )
 
 
-def run_oi_excel_cycle() -> None:
+def run_oi_excel_cycle(segment: str = "nifty") -> None:
     """Fetch chain, update Excel (Summary + Strikewise + History append), refresh suggestion cache."""
+    from config.segments import get_segment, segment_public_meta
+
+    try:
+        seg = get_segment(segment)
+    except KeyError as e:
+        logger.warning("OI cycle skipped: %s", e)
+        return
+
+    sid = seg.id
+    cache = _seg_cache(sid)
+    history = _seg_history(sid)
+    segment_meta = segment_public_meta(seg)
+
     try:
         (
             compute_market_move,
@@ -140,24 +181,30 @@ def run_oi_excel_cycle() -> None:
         ) = _try_imports()
     except ImportError as e:
         msg = f"Import error: {e}"
-        logger.warning("OI cycle skipped: %s", msg)
+        logger.warning("OI cycle skipped (%s): %s", sid, msg)
         with _lock:
-            _cache["error"] = msg
+            cache["error"] = msg
+            cache["segment"] = sid
+            cache["segment_meta"] = segment_meta
         return
 
     try:
         settings = get_settings()
     except ValidationError as e:
         msg = "UPSTOX_ACCESS_TOKEN / settings invalid — set .env in project root"
-        logger.warning("OI cycle skipped: %s (%s)", msg, e)
+        logger.warning("OI cycle skipped (%s): %s (%s)", sid, msg, e)
         with _lock:
-            _cache["error"] = msg
+            cache["error"] = msg
+            cache["segment"] = sid
+            cache["segment_meta"] = segment_meta
         return
     except Exception as e:
         msg = str(e)
-        logger.warning("OI cycle skipped (settings): %s", e)
+        logger.warning("OI cycle skipped (%s, settings): %s", sid, e)
         with _lock:
-            _cache["error"] = msg
+            cache["error"] = msg
+            cache["segment"] = sid
+            cache["segment_meta"] = segment_meta
         return
 
     params = load_analysis_parameters(settings)
@@ -173,14 +220,34 @@ def run_oi_excel_cycle() -> None:
     opening_today: dict[str, Any] | None = None
     india_vix_payload: dict[str, Any] | None = None
     future_1m_bars: list[Any] = []
+    underlying_key = (seg.instrument_key or "").strip()
     try:
         client = UpstoxClient(settings, params)
-        expiry = client.resolve_expiry(settings.option_expiry_date)
-        rows = client.fetch_option_chain(expiry)
+        if not underlying_key:
+            try:
+                resolved = client.resolve_commodity_underlying(
+                    seg.search_query or "CRUDEOIL",
+                    exchange=seg.search_exchange or "MCX",
+                    segment=seg.search_segment or "FO",
+                )
+                if resolved:
+                    underlying_key = resolved
+                    logger.info("Resolved %s underlying → %s", sid, underlying_key)
+            except Exception as e:
+                logger.warning("%s underlying resolve failed: %s", sid, e)
+        if not underlying_key:
+            raise UpstoxAPIError(
+                f"No instrument_key for segment '{sid}' — set env or ensure search resolves."
+            )
+
+        # Pin OPTION_EXPIRY_DATE only for nifty (other underlyings have different calendars)
+        fixed_expiry = settings.option_expiry_date if sid == "nifty" else None
+        expiry = client.resolve_expiry(fixed_expiry, underlying_instrument_key=underlying_key)
+        rows = client.fetch_option_chain(expiry, underlying_instrument_key=underlying_key)
         try:
             from analysis.expiry_calendar import format_expiry_weekday_day_month, pick_diagonal_expiry_pair
 
-            exps = client.list_future_expiries()
+            exps = client.list_future_expiries(underlying_key)
             today_ist = datetime.now(IST).date()
             s_d, l_d = pick_diagonal_expiry_pair(exps, expiry, today_ist)
             if s_d:
@@ -190,27 +257,29 @@ def run_oi_excel_cycle() -> None:
                 long_disp = format_expiry_weekday_day_month(l_d)
                 long_iso = l_d.isoformat()
         except Exception as e:
-            logger.debug("Diagonal expiry labels skipped: %s", e)
+            logger.debug("Diagonal expiry labels skipped (%s): %s", sid, e)
         if rows:
             try:
                 from analysis.support_resistance import build_sr_bundle
 
-                sr_bundle = build_sr_bundle(client, expiry, rows)
+                sr_bundle = build_sr_bundle(
+                    client, expiry, rows, underlying_instrument_key=underlying_key
+                )
             except Exception as e:
-                logger.warning("Support/resistance bundle skipped: %s", e)
+                logger.warning("Support/resistance bundle skipped (%s): %s", sid, e)
                 sr_bundle = None
 
         fut_key: str | None = None
         fut_sym = ""
         try:
-            fut_key, fut_sym = client.find_nifty_index_future("current_month")
+            fut_key, fut_sym = client.find_segment_future(seg.future_kind, "current_month")
         except UpstoxAPIError:
             try:
-                fut_key, fut_sym = client.find_nifty_index_future("near_month")
+                fut_key, fut_sym = client.find_segment_future(seg.future_kind, "near_month")
             except UpstoxAPIError as e:
-                logger.debug("NIFTY index future lookup skipped: %s", e)
+                logger.debug("%s future lookup skipped: %s", sid, e)
 
-        vix_key = "NSE_INDEX|India VIX"
+        vix_key = "NSE_INDEX|India VIX" if seg.show_india_vix else None
         quote_keys = [k for k in (fut_key, vix_key) if k]
         if quote_keys:
             try:
@@ -240,37 +309,43 @@ def run_oi_excel_cycle() -> None:
                             ltp=nifty_future_payload["ltp"],
                             oi=nifty_future_payload["oi"],
                             symbol=nifty_future_payload["symbol"],
+                            segment=sid,
                         )
-                vq = qmap.get(vix_key)
-                if vq and isinstance(vq, dict):
-                    vohlc = vq.get("ohlc") or {}
-                    vnc = vq.get("net_change")
-                    india_vix_payload = {
-                        "symbol": str(vq.get("symbol") or "India VIX"),
-                        "instrument_key": vix_key,
-                        "ltp": float(vq.get("last_price") or 0.0),
-                        "net_change": float(vnc) if vnc is not None else None,
-                        "ohlc_open": float(vohlc["open"]) if vohlc.get("open") is not None else None,
-                        "ohlc_close": float(vohlc["close"]) if vohlc.get("close") is not None else None,
-                    }
+                if vix_key:
+                    vq = qmap.get(vix_key)
+                    if vq and isinstance(vq, dict):
+                        vohlc = vq.get("ohlc") or {}
+                        vnc = vq.get("net_change")
+                        india_vix_payload = {
+                            "symbol": str(vq.get("symbol") or "India VIX"),
+                            "instrument_key": vix_key,
+                            "ltp": float(vq.get("last_price") or 0.0),
+                            "net_change": float(vnc) if vnc is not None else None,
+                            "ohlc_open": float(vohlc["open"]) if vohlc.get("open") is not None else None,
+                            "ohlc_close": float(vohlc["close"]) if vohlc.get("close") is not None else None,
+                        }
             except Exception as e:
-                logger.warning("NIFTY future / VIX quote / opening window: %s", e)
+                logger.warning("%s future / VIX quote / opening window: %s", sid, e)
 
         if fut_key:
             try:
                 future_1m_bars = client.fetch_1minute_candles(fut_key)
             except Exception as e:
-                logger.debug("Future 1m bars for opening range skipped: %s", e)
+                logger.debug("Future 1m bars for opening range skipped (%s): %s", sid, e)
                 future_1m_bars = []
     except UpstoxAPIError as e:
-        logger.warning("Upstox option chain failed: %s", e)
+        logger.warning("Upstox option chain failed (%s): %s", sid, e)
         with _lock:
-            _cache["error"] = str(e)
+            cache["error"] = str(e)
+            cache["segment"] = sid
+            cache["segment_meta"] = segment_meta
         return
     except Exception as e:
-        logger.exception("OI cycle failed")
+        logger.exception("OI cycle failed (%s)", sid)
         with _lock:
-            _cache["error"] = str(e)
+            cache["error"] = str(e)
+            cache["segment"] = sid
+            cache["segment_meta"] = segment_meta
         return
     finally:
         if client is not None:
@@ -281,7 +356,9 @@ def run_oi_excel_cycle() -> None:
 
     if not rows:
         with _lock:
-            _cache["error"] = "Empty option chain"
+            cache["error"] = "Empty option chain"
+            cache["segment"] = sid
+            cache["segment_meta"] = segment_meta
         return
 
     spot = float(rows[0].underlying_spot_price or 0.0)
@@ -293,30 +370,33 @@ def run_oi_excel_cycle() -> None:
         expiry=expiry,
         strikes=strikes_map,
     )
-    _history.append(snap)
+    history.append(snap)
+
+    flat_pts = float(seg.flat_threshold_points)
+    strike_step = int(seg.strike_step)
 
     mv = compute_market_move(
-        _history,
+        history,
         params.market_move_lookback_snapshots,
-        params.market_move_flat_threshold_points,
+        flat_pts,
     )
     ce_placement, ce_note = _placement_for_signal(
         params.buy_strike_mode,
         "CE",
         mv,
-        params.market_move_flat_threshold_points,
+        flat_pts,
     )
     pe_placement, pe_note = _placement_for_signal(
         params.buy_strike_mode,
         "PE",
         mv,
-        params.market_move_flat_threshold_points,
+        flat_pts,
     )
 
     ce_strike, ce_ltp = resolve_execution_strike(
         strikes_map,
         spot,
-        params.strike_step,
+        strike_step,
         "CE",
         params.min_open_interest,
         params.min_volume,
@@ -327,7 +407,7 @@ def run_oi_excel_cycle() -> None:
     pe_strike, pe_ltp = resolve_execution_strike(
         strikes_map,
         spot,
-        params.strike_step,
+        strike_step,
         "PE",
         params.min_open_interest,
         params.min_volume,
@@ -365,6 +445,7 @@ def run_oi_excel_cycle() -> None:
     summary = pd.DataFrame(
         [
             {"Field": "Last updated (IST)", "Value": now_str},
+            {"Field": "Segment", "Value": sid},
             {"Field": "Underlying spot (chain)", "Value": spot},
             {"Field": "Chain expiry", "Value": expiry},
             {"Field": "Total Call (CE) OI", "Value": total_ce},
@@ -404,7 +485,7 @@ def run_oi_excel_cycle() -> None:
         "execution_note": pe_note,
     }
 
-    out_path = oi_excel_path()
+    out_path = oi_excel_path(sid)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     hist_df = pd.DataFrame()
@@ -440,7 +521,7 @@ def run_oi_excel_cycle() -> None:
             today_payload_from_store,
         )
 
-        hist_rows = build_history_rows(PROJECT_ROOT, limit=30)
+        hist_rows = build_history_rows(PROJECT_ROOT, limit=30, segment=sid)
 
         # First chain totals inside 09:15–09:30 → session ΔOI vs 09:15
         top_s = None
@@ -463,16 +544,17 @@ def run_oi_excel_cycle() -> None:
             spot=spot,
             support_strike=top_s,
             resistance_strike=top_r,
+            segment=sid,
         )
         if opening_today is None:
-            opening_today = today_payload_from_store(PROJECT_ROOT)
+            opening_today = today_payload_from_store(PROJECT_ROOT, segment=sid)
         if isinstance(opening_today, dict):
             if chain_early:
                 opening_today["chain_early"] = chain_early
             else:
-                attach_chain_early_to_today(opening_today, PROJECT_ROOT)
+                attach_chain_early_to_today(opening_today, PROJECT_ROOT, segment=sid)
     except Exception as e:
-        logger.debug("opening_window / chain_early: %s", e)
+        logger.debug("opening_window / chain_early (%s): %s", sid, e)
 
     live_prediction: dict[str, Any] | None = None
     try:
@@ -485,7 +567,7 @@ def run_oi_excel_cycle() -> None:
             opening_window_today=opening_today,
         )
     except Exception as e:
-        logger.debug("live_prediction skipped: %s", e)
+        logger.debug("live_prediction skipped (%s): %s", sid, e)
 
     opening_session: dict[str, Any] | None = None
     try:
@@ -502,14 +584,19 @@ def run_oi_excel_cycle() -> None:
             future_1m_bars=future_1m_bars,
             india_vix=india_vix_payload,
         )
+        if isinstance(opening_session, dict) and not seg.show_gift_note:
+            gift = opening_session.get("gift_nifty")
+            if isinstance(gift, dict):
+                gift["note"] = ""
+                gift["available"] = False
     except Exception as e:
-        logger.debug("opening_session skipped: %s", e)
+        logger.debug("opening_session skipped (%s): %s", sid, e)
 
     vol_d_ce: int | None = None
     vol_d_pe: int | None = None
     with _lock:
-        prev_cv = _cache.get("total_call_volume")
-        prev_pv = _cache.get("total_put_volume")
+        prev_cv = cache.get("total_call_volume")
+        prev_pv = cache.get("total_put_volume")
     try:
         if prev_cv is not None:
             vol_d_ce = int(total_ce_vol) - int(prev_cv)
@@ -531,6 +618,8 @@ def run_oi_excel_cycle() -> None:
             "excel_path": str(out_path.resolve()),
             "error": None,
             "excel_export_error": None,
+            "segment": sid,
+            "segment_meta": segment_meta,
             "spot": spot,
             "expiry": expiry,
             "pcr": round(pcr, 6),
@@ -560,7 +649,7 @@ def run_oi_excel_cycle() -> None:
             upd["nifty_future"] = nifty_future_payload
         if opening_today is not None:
             upd["opening_window_today"] = opening_today
-        _cache.update(upd)
+        cache.update(upd)
 
     try:
         with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
@@ -568,27 +657,51 @@ def run_oi_excel_cycle() -> None:
             df.to_excel(writer, sheet_name="Strikewise_CE_PE_OI", index=False)
             hist_df.to_excel(writer, sheet_name="History", index=False)
             OI_VS_PRICE_FUTURE_LEGEND.to_excel(writer, sheet_name="OI_vs_price_future", index=False)
-        logger.info("OI Excel updated: %s rows -> %s", len(df), out_path)
+        logger.info("OI Excel updated (%s): %s rows -> %s", sid, len(df), out_path)
     except (PermissionError, OSError) as e:
         hint = (
             "Could not write Excel - the file may be open in Excel or another app. "
             "Close it or set OI_EXCEL_PATH to a different path. Dashboard data still updated."
         )
-        logger.warning("OI Excel write failed (%s): %s", type(e).__name__, e)
+        logger.warning("OI Excel write failed (%s, %s): %s", sid, type(e).__name__, e)
         with _lock:
-            _cache["excel_export_error"] = f"{hint} ({type(e).__name__})"
+            cache["excel_export_error"] = f"{hint} ({type(e).__name__})"
     except Exception as e:
-        logger.warning("OI Excel write failed: %s", e)
+        logger.warning("OI Excel write failed (%s): %s", sid, e)
         with _lock:
-            _cache["excel_export_error"] = f"Excel export failed: {e}"
+            cache["excel_export_error"] = f"Excel export failed: {e}"
 
 
-def set_oi_fatal_error(message: str) -> None:
+def run_all_oi_excel_cycles() -> None:
+    """Run one OI cycle for each enabled segment (background loop entrypoint)."""
+    from config.segments import enabled_segment_ids
+
+    for sid in enabled_segment_ids():
+        try:
+            run_oi_excel_cycle(sid)
+        except Exception:
+            logger.exception("OI cycle failed for segment %s", sid)
+
+
+def set_oi_fatal_error(message: str, segment: str = "nifty") -> None:
     """Record a hard failure so /oi/* still returns 200 with a structured error."""
+    from config.segments import get_segment, segment_public_meta
+
+    sid = (segment or "nifty").strip().lower()
+    cache = _seg_cache(sid)
+    meta = None
+    try:
+        meta = segment_public_meta(get_segment(sid))
+    except Exception:
+        pass
     with _lock:
-        _cache["error"] = message
+        cache["error"] = message
+        cache["segment"] = sid
+        if meta is not None:
+            cache["segment_meta"] = meta
 
 
-def get_oi_cache_snapshot() -> dict[str, Any]:
+def get_oi_cache_snapshot(segment: str = "nifty") -> dict[str, Any]:
+    cache = _seg_cache(segment)
     with _lock:
-        return dict(_cache)
+        return dict(cache)

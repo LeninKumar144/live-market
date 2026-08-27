@@ -154,9 +154,9 @@ class UpstoxClient:
                 out.add(d)
         return sorted(out)
 
-    def list_future_expiries(self) -> list[date]:
-        """Unique NIFTY option expiries on or after today (IST)."""
-        return self.list_option_expiries(None)
+    def list_future_expiries(self, underlying_instrument_key: str | None = None) -> list[date]:
+        """Unique option expiries on or after today (IST) for the given underlying."""
+        return self.list_option_expiries(underlying_instrument_key)
 
     def resolve_expiry(
         self, fixed_expiry: str | None, underlying_instrument_key: str | None = None
@@ -169,6 +169,48 @@ class UpstoxClient:
             raise UpstoxAPIError("No future expiries returned for underlying.")
         return expiries[0].isoformat()
 
+    def resolve_commodity_underlying(
+        self,
+        query: str,
+        *,
+        exchange: str = "MCX",
+        segment: str = "FO",
+    ) -> str | None:
+        """
+        Best-effort underlying instrument_key for commodity option-chain calls.
+
+        Prefers rows whose trading_symbol matches the query (e.g. CRUDEOIL) without CE/PE/FUT suffixes.
+        """
+        q = str(query or "").strip().upper()
+        if not q:
+            return None
+        rows = self.search_instruments(
+            query=q,
+            exchanges=exchange,
+            segments=segment,
+            page_number=1,
+            records=30,
+        )
+        exact: list[str] = []
+        fuzzy: list[str] = []
+        for row in rows:
+            ik = str(row.get("instrument_key") or "").strip()
+            if not ik:
+                continue
+            ts = str(row.get("trading_symbol") or "").strip().upper()
+            it = str(row.get("instrument_type") or "").upper()
+            # Prefer non-option / non-future "underlying" style keys when present
+            if ts == q or ts.replace(" ", "") == q:
+                if it in ("", "EQ", "COM", "INDEX", "UNDF") or "CE" not in ts and "PE" not in ts and "FUT" not in it:
+                    exact.append(ik)
+                else:
+                    fuzzy.append(ik)
+            elif q in ts and "CE" not in ts and "PE" not in ts:
+                fuzzy.append(ik)
+        if exact:
+            return exact[0]
+        return fuzzy[0] if fuzzy else None
+
     def resolve_nse_equity_instrument_key(self, symbol: str) -> str | None:
         """
         Locate cash equity instrument_key for an NSE ticker (for stock option-chain underlying).
@@ -178,7 +220,6 @@ class UpstoxClient:
         sym_u = str(symbol or "").strip().upper()
         if not sym_u:
             return None
-        # API caps `records` at 30; EQ segment narrows to cash equity.
         rows = self.search_instruments(
             query=sym_u,
             exchanges="NSE",
@@ -217,9 +258,75 @@ class UpstoxClient:
 
         Returns (instrument_key, trading_symbol). Raises if none found.
         """
+        return self.find_segment_future("nifty", expiry=expiry)
+
+    def find_segment_future(self, future_kind: str, expiry: str = "current_month") -> tuple[str, str]:
+        """
+        Locate near-month future for a dashboard segment.
+
+        future_kind: nifty | banknifty | sensex | mcx_crude
+        Returns (instrument_key, trading_symbol).
+        """
+        kind = str(future_kind or "nifty").strip().lower()
+        if kind == "nifty":
+            return self._find_fo_future(
+                query="NIFTY",
+                exchanges="NSE",
+                segment_filter="NSE_FO",
+                expiry=expiry,
+                accept=lambda su, _it: (
+                    "BANK" not in su
+                    and su.startswith("NIFTY ")
+                    and not (
+                        len(su.split()) > 1
+                        and su.split()[1].isalpha()
+                        and len(su.split()[1]) > 3
+                    )
+                ),
+                err="No NIFTY index future in instrument search; try expiry=near_month.",
+            )
+        if kind == "banknifty":
+            return self._find_fo_future(
+                query="BANKNIFTY",
+                exchanges="NSE",
+                segment_filter="NSE_FO",
+                expiry=expiry,
+                accept=lambda su, _it: "BANK" in su and "NIFTY" in su and "FUT" in su,
+                err="No Bank Nifty future found; try expiry=near_month.",
+            )
+        if kind == "sensex":
+            return self._find_fo_future(
+                query="SENSEX",
+                exchanges="BSE",
+                segment_filter="BSE_FO",
+                expiry=expiry,
+                accept=lambda su, _it: "SENSEX" in su and "BANK" not in su,
+                err="No SENSEX future found; try expiry=near_month.",
+            )
+        if kind in ("mcx_crude", "mcx"):
+            return self._find_fo_future(
+                query="CRUDEOIL",
+                exchanges="MCX",
+                segment_filter="MCX_FO",
+                expiry=expiry,
+                accept=lambda su, _it: "CRUDE" in su and "CE" not in su and "PE" not in su,
+                err="No MCX Crude Oil future found; set MCX future via search or try near_month.",
+            )
+        raise UpstoxAPIError(f"Unsupported future_kind: {future_kind}")
+
+    def _find_fo_future(
+        self,
+        *,
+        query: str,
+        exchanges: str,
+        segment_filter: str,
+        expiry: str,
+        accept,
+        err: str,
+    ) -> tuple[str, str]:
         rows = self.search_instruments(
-            query="NIFTY",
-            exchanges="NSE",
+            query=query,
+            exchanges=exchanges,
             segments="FO",
             expiry=expiry,
             page_number=1,
@@ -227,27 +334,21 @@ class UpstoxClient:
         )
         candidates: list[tuple[str, str]] = []
         for row in rows:
-            if str(row.get("segment") or "") != "NSE_FO":
+            seg = str(row.get("segment") or "")
+            if segment_filter and seg != segment_filter:
                 continue
             sym = str(row.get("trading_symbol") or "")
             su = sym.upper()
             it = str(row.get("instrument_type") or "").upper()
             if it != "FUT" and "FUT" not in su:
                 continue
-            if "BANK" in su:
-                continue
-            if not su.startswith("NIFTY "):
-                continue
-            second = su.split()[1] if len(su.split()) > 1 else ""
-            if second.isalpha() and len(second) > 3:
+            if not accept(su, it):
                 continue
             ik = str(row.get("instrument_key") or "")
             if ik:
                 candidates.append((ik, sym))
-
         if not candidates:
-            raise UpstoxAPIError("No NIFTY index future in instrument search; try expiry=near_month.")
-
+            raise UpstoxAPIError(err)
         candidates.sort(key=lambda x: x[1])
         return candidates[0]
 
@@ -296,16 +397,20 @@ class UpstoxClient:
         return rows
 
     def fetch_daily_candles(
-        self, from_date: date, to_date: date
+        self,
+        from_date: date,
+        to_date: date,
+        instrument_key: str | None = None,
     ) -> list[tuple[date, float, float, float, float]]:
         """
-        Daily OHLC for the index (NIFTY 50) from historical-candle API.
+        Daily OHLC for an underlying (default: client NIFTY key) from historical-candle API.
 
         Returns sorted rows: (session_date, open, high, low, close). Used for pivot (prior day / week / month).
         """
         if from_date > to_date:
             from_date, to_date = to_date, from_date
-        path = f"/historical-candle/{_encode_key(self._underlying)}/day/{to_date.isoformat()}/{from_date.isoformat()}"
+        ik = instrument_key or self._underlying
+        path = f"/historical-candle/{_encode_key(ik)}/day/{to_date.isoformat()}/{from_date.isoformat()}"
         try:
             raw = self._get(path)
         except Exception as e:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Path as PathParam, Query
 
 from models.schemas import (
     AggregateChainOiOut,
@@ -30,6 +30,7 @@ from models.schemas import (
     OpeningWindowSnapshotOut,
     OpeningWindowTodayOut,
     OvernightWallsOut,
+    SegmentMetaOut,
     SessionDoiVs915Out,
     SessionMovePredictionOut,
     SRLevelsBundle,
@@ -60,9 +61,28 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
+def _normalize_segment(segment: str) -> str:
+    from config.segments import get_segment
+
+    sid = (segment or "nifty").strip().lower()
+    try:
+        return get_segment(sid).id
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+
 @router.get("/health")
 def health() -> dict:
     return {"status": "ok"}
+
+
+@router.get("/segments")
+def list_segments() -> dict:
+    """Public meta for dashboard nav (nifty / banknifty / sensex / mcx)."""
+    from config.segments import all_segments, enabled_segment_ids, segment_public_meta
+
+    items = [segment_public_meta(seg) for seg in all_segments().values()]
+    return {"segments": items, "enabled": enabled_segment_ids()}
 
 
 @router.get("/signals", response_model=SignalsResponse)
@@ -243,12 +263,13 @@ def _coerce_opening_provisional(raw: object) -> OpeningWindowProvisionalOut | No
         return None
 
 
-def _coerce_opening_window(c: dict) -> OpeningWindowBlockOut | None:
+def _coerce_opening_window(c: dict, segment: str = "nifty") -> OpeningWindowBlockOut | None:
     from services.opening_window_service import build_history_rows, merge_provisional_into_today, today_payload_from_store
 
+    sid = (segment or c.get("segment") or "nifty").strip().lower()
     today_raw = c.get("opening_window_today")
     if not isinstance(today_raw, dict):
-        today_raw = today_payload_from_store(PROJECT_ROOT)
+        today_raw = today_payload_from_store(PROJECT_ROOT, segment=sid)
     if isinstance(today_raw, dict):
         today_raw = {**today_raw}
 
@@ -264,7 +285,7 @@ def _coerce_opening_window(c: dict) -> OpeningWindowBlockOut | None:
 
     hist = c.get("opening_window_history")
     if not isinstance(hist, list) or not hist:
-        hist = build_history_rows(PROJECT_ROOT, limit=30)
+        hist = build_history_rows(PROJECT_ROOT, limit=30, segment=sid)
     rows: list[OpeningWindowHistoryRowOut] = []
     for item in hist:
         if not isinstance(item, dict):
@@ -294,15 +315,25 @@ def _coerce_opening_window(c: dict) -> OpeningWindowBlockOut | None:
         except Exception:
             today_out = None
     note = (
-        "Uses NIFTY index future: anchor = first poll in 09:15-09:29 IST; compare to first poll at/after 09:30. "
+        "Uses index/commodity future: anchor = first poll in 09:15-09:29 IST; compare to first poll at/after 09:30. "
         "Between 09:15 and 09:30, today's trend updates live vs that anchor. "
         "Keep the backend running through the open so both legs are captured."
     )
     return OpeningWindowBlockOut(today=today_out, history=rows, note=note)
 
 
-def _oi_status_from_cache() -> OIStatusResponse:
-    c = get_oi_cache_snapshot()
+def _coerce_segment_meta(raw: object) -> SegmentMetaOut | None:
+    if not isinstance(raw, dict):
+        return None
+    try:
+        return SegmentMetaOut(**raw)
+    except Exception:
+        return None
+
+
+def _oi_status_from_cache(segment: str = "nifty") -> OIStatusResponse:
+    sid = (segment or "nifty").strip().lower()
+    c = get_oi_cache_snapshot(sid)
     buy_ce = c.get("buy_ce")
     buy_pe = c.get("buy_pe")
     return OIStatusResponse(
@@ -311,6 +342,8 @@ def _oi_status_from_cache() -> OIStatusResponse:
         excel_export_error=c.get("excel_export_error"),
         updated_at=c.get("updated_at"),
         excel_path=c.get("excel_path"),
+        segment=str(c.get("segment") or sid),
+        segment_meta=_coerce_segment_meta(c.get("segment_meta")),
         spot=float(c.get("spot") or 0),
         expiry=str(c.get("expiry") or ""),
         pcr=c.get("pcr"),
@@ -323,7 +356,7 @@ def _oi_status_from_cache() -> OIStatusResponse:
         market_move_label=str(c.get("market_move_label") or ""),
         sr_levels=_coerce_sr_levels(c.get("sr_levels")),
         nifty_future=_coerce_nifty_future(c.get("nifty_future")),
-        opening_window=_coerce_opening_window(c),
+        opening_window=_coerce_opening_window(c, sid),
         live_prediction=_coerce_live_prediction(c.get("live_prediction")),
         opening_session=_coerce_opening_session(c.get("opening_session")),
         india_vix=_coerce_india_vix(c.get("india_vix")),
@@ -334,19 +367,37 @@ def _oi_status_from_cache() -> OIStatusResponse:
 
 @router.get("/oi/status", response_model=OIStatusResponse)
 def get_oi_status() -> OIStatusResponse:
-    """Latest CE/PE OI snapshot, Excel path, and suggested BUY CE / BUY PE strikes."""
-    return _oi_status_from_cache()
+    """Latest CE/PE OI snapshot, Excel path, and suggested BUY CE / BUY PE strikes (NIFTY alias)."""
+    return _oi_status_from_cache("nifty")
+
+
+@router.get("/oi/{segment}/status", response_model=OIStatusResponse)
+def get_oi_status_segment(segment: str = PathParam(..., description="nifty|banknifty|sensex|mcx")) -> OIStatusResponse:
+    return _oi_status_from_cache(_normalize_segment(segment))
 
 
 @router.post("/oi/refresh", response_model=OIStatusResponse)
 def post_oi_refresh() -> OIStatusResponse:
-    """Run one immediate fetch → Excel + cache update (may take a few seconds)."""
+    """Run one immediate fetch → Excel + cache update (NIFTY alias)."""
     try:
-        run_oi_excel_cycle()
+        run_oi_excel_cycle("nifty")
     except Exception as e:
         logger.exception("OI refresh failed")
-        set_oi_fatal_error(str(e))
-    return _oi_status_from_cache()
+        set_oi_fatal_error(str(e), segment="nifty")
+    return _oi_status_from_cache("nifty")
+
+
+@router.post("/oi/{segment}/refresh", response_model=OIStatusResponse)
+def post_oi_refresh_segment(
+    segment: str = PathParam(..., description="nifty|banknifty|sensex|mcx"),
+) -> OIStatusResponse:
+    sid = _normalize_segment(segment)
+    try:
+        run_oi_excel_cycle(sid)
+    except Exception as e:
+        logger.exception("OI refresh failed (%s)", sid)
+        set_oi_fatal_error(str(e), segment=sid)
+    return _oi_status_from_cache(sid)
 
 
 def _coerce_future_chart(raw: dict) -> OiFutureChartResponse:
@@ -381,11 +432,20 @@ def _coerce_future_chart(raw: dict) -> OiFutureChartResponse:
 @router.get("/oi/future-chart", response_model=OiFutureChartResponse)
 def get_oi_future_chart() -> OiFutureChartResponse:
     """
-    NIFTY index future 1-minute candles (when available) plus a heuristic plan from Σ CE/PE OI, PCR,
+    Segment future 1-minute candles (when available) plus a heuristic plan from Σ CE/PE OI, PCR,
     session ΔOI, live Σ CE/PE volume & poll Δvol, candle patterns, and optional pivot R1/S1 from the OI cache.
-    If the future instrument is missing or candles fail, `chart_warning` is set and the plan may use chain-only logic.
+    NIFTY alias for `/oi/{segment}/future-chart`.
     """
-    raw = get_future_chart_payload()
+    raw = get_future_chart_payload("nifty")
+    return _coerce_future_chart(raw if isinstance(raw, dict) else {})
+
+
+@router.get("/oi/{segment}/future-chart", response_model=OiFutureChartResponse)
+def get_oi_future_chart_segment(
+    segment: str = PathParam(..., description="nifty|banknifty|sensex|mcx"),
+) -> OiFutureChartResponse:
+    sid = _normalize_segment(segment)
+    raw = get_future_chart_payload(sid)
     return _coerce_future_chart(raw if isinstance(raw, dict) else {})
 
 
@@ -423,14 +483,8 @@ def get_stock_options_liquidity() -> StockOptionsLiquidityResponse:
     )
 
 
-@router.get("/hedging", response_model=HedgingResponse)
-def get_hedging() -> HedgingResponse:
-    """
-    Multi-horizon hedging / spread suggestions from live OI cache + recent CE/PE signals.
-
-    Strikes are illustrative (NIFTY grid); validate premiums and margin with your broker.
-    """
-    raw = get_hedging_response()
+def _hedging_response(segment: str = "nifty") -> HedgingResponse:
+    raw = get_hedging_response(segment)
     return HedgingResponse(
         intraday=HedgingStrategyBlock(**raw["intraday"]),
         weekly=HedgingStrategyBlock(**raw["weekly"]),
@@ -439,3 +493,18 @@ def get_hedging() -> HedgingResponse:
         diagonal=DiagonalWidgetBlock(**raw["diagonal"]),
         meta=HedgingMetaBlock(**raw["meta"]),
     )
+
+
+@router.get("/hedging", response_model=HedgingResponse)
+def get_hedging() -> HedgingResponse:
+    """
+    Multi-horizon hedging / spread suggestions from live OI cache + recent CE/PE signals (NIFTY alias).
+    """
+    return _hedging_response("nifty")
+
+
+@router.get("/hedging/{segment}", response_model=HedgingResponse)
+def get_hedging_segment(
+    segment: str = PathParam(..., description="nifty|banknifty|sensex|mcx"),
+) -> HedgingResponse:
+    return _hedging_response(_normalize_segment(segment))

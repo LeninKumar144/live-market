@@ -9,11 +9,20 @@ export default function DashboardLayout() {
   return (
     <div className="app-shell">
       <nav className="dash-nav" aria-label="Dashboard sections">
-        <NavLink to="/" end className={navClass}>
-          NIFTY OI &amp; hedging
+        <NavLink to="/nifty" className={navClass}>
+          NIFTY
+        </NavLink>
+        <NavLink to="/banknifty" className={navClass}>
+          Bank Nifty
+        </NavLink>
+        <NavLink to="/sensex" className={navClass}>
+          SENSEX
+        </NavLink>
+        <NavLink to="/mcx" className={navClass}>
+          MCX Crude
         </NavLink>
         <NavLink to="/stock-options" className={navClass}>
-          Stock options — liquidity
+          Stock options
         </NavLink>
       </nav>
       <Outlet />

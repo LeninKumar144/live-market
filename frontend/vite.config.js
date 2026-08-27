@@ -29,6 +29,7 @@ export default defineConfig(({ mode }) => {
       "/health": { target: apiTarget, changeOrigin: true },
       "/oi": { target: apiTarget, changeOrigin: true },
       "/hedging": { target: apiTarget, changeOrigin: true },
+      "/segments": { target: apiTarget, changeOrigin: true },
       "/stock-options": { target: apiTarget, changeOrigin: true },
     },
   },
