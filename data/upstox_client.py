@@ -177,38 +177,63 @@ class UpstoxClient:
         segment: str = "FO",
     ) -> str | None:
         """
-        Best-effort underlying instrument_key for commodity option-chain calls.
+        Best-effort underlying / future instrument_key for commodity dashboards.
 
-        Prefers rows whose trading_symbol matches the query (e.g. CRUDEOIL) without CE/PE/FUT suffixes.
+        Tries FO then broader searches. Prefers exact symbol match, then near-month FUT.
+        Note: Upstox /option/chain does not support MCX — callers should treat this as a
+        futures key when option chain is unavailable.
         """
         q = str(query or "").strip().upper()
         if not q:
             return None
-        rows = self.search_instruments(
-            query=q,
-            exchanges=exchange,
-            segments=segment,
-            page_number=1,
-            records=30,
-        )
+
+        attempts: list[dict[str, Any]] = [
+            {"query": q, "exchanges": exchange, "segments": segment},
+            {"query": q, "exchanges": exchange, "segments": "FUT"},
+            {"query": q, "exchanges": exchange, "segments": "ALL"},
+            {"query": q, "exchanges": "ALL", "segments": "ALL"},
+        ]
+        seen: set[str] = set()
         exact: list[str] = []
+        fut: list[tuple[str, str]] = []
         fuzzy: list[str] = []
-        for row in rows:
-            ik = str(row.get("instrument_key") or "").strip()
-            if not ik:
+
+        for params in attempts:
+            try:
+                rows = self.search_instruments(
+                    **params,
+                    page_number=1,
+                    records=30,
+                )
+            except Exception as e:
+                logger.debug("Commodity search failed %s: %s", params, e)
                 continue
-            ts = str(row.get("trading_symbol") or "").strip().upper()
-            it = str(row.get("instrument_type") or "").upper()
-            # Prefer non-option / non-future "underlying" style keys when present
-            if ts == q or ts.replace(" ", "") == q:
-                if it in ("", "EQ", "COM", "INDEX", "UNDF") or "CE" not in ts and "PE" not in ts and "FUT" not in it:
-                    exact.append(ik)
-                else:
-                    fuzzy.append(ik)
-            elif q in ts and "CE" not in ts and "PE" not in ts:
-                fuzzy.append(ik)
+            for row in rows:
+                ik = str(row.get("instrument_key") or "").strip()
+                if not ik or ik in seen:
+                    continue
+                seen.add(ik)
+                ts = str(row.get("trading_symbol") or "").strip().upper()
+                it = str(row.get("instrument_type") or "").upper()
+                name = str(row.get("name") or "").strip().upper()
+                if ts == q or ts.replace(" ", "") == q or name == q:
+                    if it == "FUT" or "FUT" in ts:
+                        fut.append((ik, ts))
+                    elif "CE" not in ts and "PE" not in ts:
+                        exact.append(ik)
+                    else:
+                        fuzzy.append(ik)
+                elif q in ts and "CE" not in ts and "PE" not in ts:
+                    if it == "FUT" or "FUT" in ts:
+                        fut.append((ik, ts))
+                    else:
+                        fuzzy.append(ik)
+
         if exact:
             return exact[0]
+        if fut:
+            fut.sort(key=lambda x: x[1])
+            return fut[0][0]
         return fuzzy[0] if fuzzy else None
 
     def resolve_nse_equity_instrument_key(self, symbol: str) -> str | None:
@@ -304,14 +329,23 @@ class UpstoxClient:
                 err="No SENSEX future found; try expiry=near_month.",
             )
         if kind in ("mcx_crude", "mcx"):
-            return self._find_fo_future(
-                query="CRUDEOIL",
-                exchanges="MCX",
-                segment_filter="MCX_FO",
-                expiry=expiry,
-                accept=lambda su, _it: "CRUDE" in su and "CE" not in su and "PE" not in su,
-                err="No MCX Crude Oil future found; set MCX future via search or try near_month.",
-            )
+            # Prefer dedicated FO search; fall back to commodity resolve (FUT key).
+            try:
+                return self._find_fo_future(
+                    query="CRUDEOIL",
+                    exchanges="MCX",
+                    segment_filter="MCX_FO",
+                    expiry=expiry,
+                    accept=lambda su, _it: "CRUDE" in su and "CE" not in su and "PE" not in su,
+                    err="No MCX Crude Oil future found; try near_month or set MCX_INSTRUMENT_KEY.",
+                )
+            except UpstoxAPIError:
+                ik = self.resolve_commodity_underlying("CRUDEOIL", exchange="MCX", segment="FO")
+                if ik:
+                    return ik, "CRUDEOIL FUT"
+                raise UpstoxAPIError(
+                    "No MCX Crude Oil future found; set MCX_INSTRUMENT_KEY to a MCX_FO|… future key."
+                )
         raise UpstoxAPIError(f"Unsupported future_kind: {future_kind}")
 
     def _find_fo_future(

@@ -339,6 +339,8 @@ def _oi_status_from_cache(segment: str = "nifty") -> OIStatusResponse:
     return OIStatusResponse(
         ok=bool(c.get("updated_at")) and c.get("error") is None,
         error=c.get("error"),
+        warning=c.get("warning"),
+        data_mode=str(c.get("data_mode") or "option_chain"),
         excel_export_error=c.get("excel_export_error"),
         updated_at=c.get("updated_at"),
         excel_path=c.get("excel_path"),

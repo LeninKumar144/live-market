@@ -334,42 +334,68 @@ export default function UnderlyingDashboard() {
           {oiBoot && <span className="pill pill--load">Loading chain…</span>}
           {oiLoading && !oiBoot && <span className="pill pill--load">Refreshing chain…</span>}
           {oi?.ok && chainTime && (
-            <span className="pill pill--ok" title="Last successful option-chain snapshot">
-              Chain {chainTime}
+            <span className="pill pill--ok" title="Last successful snapshot">
+              {oi.data_mode === "futures_only" ? "Future" : "Chain"} {chainTime}
             </span>
           )}
-          {oi && !oi.ok && oi.error && <span className="pill pill--err">Chain: setup required</span>}
+          {oi?.data_mode === "futures_only" && oi?.ok && (
+            <span className="pill pill--muted" title={oi.warning || ""}>
+              Futures only
+            </span>
+          )}
+          {oi && !oi.ok && oi.error && <span className="pill pill--err">Setup required</span>}
         </div>
       </header>
 
       <section className="card oi-panel">
         <div className="card-head oi-panel__head">
           <div>
-            <h2>CE / PE open interest</h2>
+            <h2>{oi?.data_mode === "futures_only" ? "Future quote &amp; session" : "CE / PE open interest"}</h2>
             <p className="muted small oi-panel__sub">
-              Excel updated every {oi?.update_interval_seconds ?? 60}s (see{" "}
-              <code className="code-inline">exports/{excelHint}</code>
-              {segment === "nifty" ? (
+              {oi?.data_mode === "futures_only" ? (
                 <>
-                  {" "}
-                  or <code className="code-inline">OI_EXCEL_PATH</code>
+                  Upstox has no MCX option chain — live crude <strong>future</strong> LTP/OI, candles, and opening
+                  range only. Excel: <code className="code-inline">exports/{excelHint}</code>. Optional pin:{" "}
+                  <code className="code-inline">MCX_INSTRUMENT_KEY</code> on the API host.
                 </>
-              ) : null}
-              ). Strikes use segment step +{" "}
-              <code className="code-inline">config/analysis.yaml</code> liquidity &amp; ATM/OTM rules.
+              ) : (
+                <>
+                  Excel updated every {oi?.update_interval_seconds ?? 60}s (see{" "}
+                  <code className="code-inline">exports/{excelHint}</code>
+                  {segment === "nifty" ? (
+                    <>
+                      {" "}
+                      or <code className="code-inline">OI_EXCEL_PATH</code>
+                    </>
+                  ) : null}
+                  ). Strikes use segment step +{" "}
+                  <code className="code-inline">config/analysis.yaml</code> liquidity &amp; ATM/OTM rules.
+                </>
+              )}
             </p>
           </div>
           <button type="button" className="btn btn--ghost" onClick={refreshOiNow} disabled={oiLoading || oiBoot}>
-            {oiLoading ? "Refreshing…" : "Refresh OI now"}
+            {oiLoading ? "Refreshing…" : "Refresh now"}
           </button>
         </div>
 
         {oiBoot && <p className="muted small oi-panel__boot">Fetching /oi/{segment}/status…</p>}
 
+        {oi?.warning && (
+          <p className="oi-panel__warn oi-panel__warn--soft">{oi.warning}</p>
+        )}
+
         {oi && oi.error && (
             <p className="oi-panel__warn">
               {oi.error}
-              {/upstox|access_token|settings invalid|\.env/i.test(oi.error || "") ? (
+              {/MCX_INSTRUMENT_KEY|instrument_key|future found/i.test(oi.error || "") ? (
+                <span className="muted small">
+                  {" "}
+                  — Set <code className="code-inline">MCX_INSTRUMENT_KEY</code> on the API (Render/local{" "}
+                  <code className="code-inline">.env</code>) to a near-month <code className="code-inline">MCX_FO|…</code>{" "}
+                  crude future key, then restart the API.
+                </span>
+              ) : /upstox|access_token|settings invalid|\.env/i.test(oi.error || "") ? (
                 <span className="muted small">
                   {" "}
                   — Ensure <code className="code-inline">UPSTOX_ACCESS_TOKEN</code> is set in the project root{" "}

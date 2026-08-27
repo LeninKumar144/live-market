@@ -290,11 +290,20 @@ class SegmentMetaOut(BaseModel):
     show_gift_note: bool = False
     route_path: str = ""
     instrument_key: str = ""
+    supports_option_chain: bool = True
 
 
 class OIStatusResponse(BaseModel):
     ok: bool = Field(description="True when a successful chain snapshot is cached")
     error: str | None = None
+    warning: str | None = Field(
+        None,
+        description="Soft notice (e.g. futures-only mode when option chain is unavailable)",
+    )
+    data_mode: str = Field(
+        "option_chain",
+        description="option_chain | futures_only — how this segment snapshot was built",
+    )
     excel_export_error: str | None = Field(
         None,
         description="Chain succeeded but writing the Excel file failed (e.g. file open in Excel)",

@@ -48,6 +48,8 @@ def _empty_cache() -> dict[str, Any]:
         "updated_at": None,
         "excel_path": None,
         "error": None,
+        "warning": None,
+        "data_mode": "option_chain",
         "segment": "nifty",
         "segment_meta": None,
         "nifty_future": None,
@@ -153,6 +155,215 @@ def _try_imports():
     )
 
 
+def _run_futures_only_cycle(
+    *,
+    seg: Any,
+    sid: str,
+    cache: dict[str, Any],
+    segment_meta: dict[str, Any],
+    settings: Any,
+    params: Any,
+    UpstoxClient: Any,
+    UpstoxAPIError: Any,
+) -> None:
+    """
+    MCX / commodity path: Upstox does not expose option-chain for MCX.
+
+    Still loads near-month future quotes, 1m candles, opening-window trend, and opening_session gap/OR.
+    """
+    from analysis.opening_session import build_opening_session
+    from services.opening_window_service import (
+        build_history_rows,
+        record_future_snapshot,
+        today_payload_from_store,
+    )
+
+    client: Any = None
+    nifty_future_payload: dict[str, Any] | None = None
+    opening_today: dict[str, Any] | None = None
+    future_1m_bars: list[Any] = []
+    warning = (
+        "Upstox option-chain API does not support MCX commodities. "
+        "This dashboard runs in futures-only mode (live crude future LTP/OI, candles, "
+        "opening range). CE/PE OI, PCR walls, and option hedging need another data source."
+    )
+
+    try:
+        client = UpstoxClient(settings, params)
+        fut_key: str | None = (seg.instrument_key or "").strip() or None
+        fut_sym = ""
+        if fut_key:
+            fut_sym = "CRUDEOIL FUT"
+        else:
+            try:
+                fut_key, fut_sym = client.find_segment_future(seg.future_kind, "current_month")
+            except UpstoxAPIError:
+                try:
+                    fut_key, fut_sym = client.find_segment_future(seg.future_kind, "near_month")
+                except UpstoxAPIError as e:
+                    raise UpstoxAPIError(
+                        f"No MCX Crude future found ({e}). "
+                        "Set MCX_INSTRUMENT_KEY on the API host to a MCX_FO|… future key."
+                    ) from e
+
+        raw_q = client.fetch_market_quotes([fut_key])
+        qmap = _quote_key_map(raw_q)
+        q = qmap.get(fut_key)
+        if not q or not isinstance(q, dict):
+            raise UpstoxAPIError(f"No market quote for MCX future {fut_key}")
+
+        ohlc = q.get("ohlc") or {}
+        nc = q.get("net_change")
+        nifty_future_payload = {
+            "symbol": str(q.get("symbol") or fut_sym or "CRUDEOIL FUT"),
+            "instrument_key": fut_key,
+            "ltp": float(q.get("last_price") or 0.0),
+            "oi": int(q.get("oi") or 0),
+            "volume": int(q.get("volume") or 0),
+            "net_change": float(nc) if nc is not None else None,
+            "ohlc_open": float(ohlc["open"]) if ohlc.get("open") is not None else None,
+            "ohlc_high": float(ohlc["high"]) if ohlc.get("high") is not None else None,
+            "ohlc_low": float(ohlc["low"]) if ohlc.get("low") is not None else None,
+            "ohlc_close": float(ohlc["close"]) if ohlc.get("close") is not None else None,
+        }
+        opening_today = record_future_snapshot(
+            PROJECT_ROOT,
+            ltp=nifty_future_payload["ltp"],
+            oi=nifty_future_payload["oi"],
+            symbol=nifty_future_payload["symbol"],
+            segment=sid,
+        )
+        try:
+            future_1m_bars = client.fetch_1minute_candles(fut_key)
+        except Exception as e:
+            logger.debug("MCX 1m bars skipped: %s", e)
+            future_1m_bars = []
+    except UpstoxAPIError as e:
+        logger.warning("Futures-only cycle failed (%s): %s", sid, e)
+        with _lock:
+            cache["error"] = str(e)
+            cache["warning"] = warning
+            cache["data_mode"] = "futures_only"
+            cache["segment"] = sid
+            cache["segment_meta"] = segment_meta
+        return
+    except Exception as e:
+        logger.exception("Futures-only cycle failed (%s)", sid)
+        with _lock:
+            cache["error"] = str(e)
+            cache["warning"] = warning
+            cache["data_mode"] = "futures_only"
+            cache["segment"] = sid
+            cache["segment_meta"] = segment_meta
+        return
+    finally:
+        if client is not None:
+            try:
+                client.close()
+            except Exception:
+                pass
+
+    spot = float((nifty_future_payload or {}).get("ltp") or 0.0)
+    if isinstance(opening_today, dict):
+        pass
+    else:
+        opening_today = today_payload_from_store(PROJECT_ROOT, segment=sid)
+
+    opening_session = None
+    try:
+        opening_session = build_opening_session(
+            spot=spot,
+            pcr=None,
+            total_ce_oi=0,
+            total_pe_oi=0,
+            nifty_future=nifty_future_payload,
+            opening_window_today=opening_today,
+            sr_bundle=None,
+            future_1m_bars=future_1m_bars,
+            india_vix=None,
+        )
+        if isinstance(opening_session, dict):
+            opening_session["gift_nifty"] = {
+                "available": False,
+                "note": "GIFT Nifty applies to NIFTY only.",
+            }
+            opening_session["disclaimer"] = (
+                "Futures-only opening read (gap / OR / future OI vs price). "
+                "No option ΔOI — Upstox MCX option chain unavailable."
+            )
+    except Exception as e:
+        logger.debug("opening_session futures-only skipped: %s", e)
+
+    hist_rows: list[Any] = []
+    try:
+        hist_rows = build_history_rows(PROJECT_ROOT, limit=30, segment=sid)
+    except Exception:
+        hist_rows = []
+
+    out_path = oi_excel_path(sid)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    updated_iso = datetime.now(IST).isoformat()
+    now_str = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
+    summary = pd.DataFrame(
+        [
+            {"Field": "Last updated (IST)", "Value": now_str},
+            {"Field": "Mode", "Value": "futures_only"},
+            {"Field": "Segment", "Value": sid},
+            {"Field": "Future LTP", "Value": spot},
+            {
+                "Field": "Future OI",
+                "Value": int((nifty_future_payload or {}).get("oi") or 0),
+            },
+            {"Field": "Note", "Value": warning},
+        ]
+    )
+    try:
+        with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
+            summary.to_excel(writer, sheet_name="Summary", index=False)
+            OI_VS_PRICE_FUTURE_LEGEND.to_excel(writer, sheet_name="OI_vs_price_future", index=False)
+    except Exception as e:
+        logger.debug("MCX futures Excel write skipped: %s", e)
+
+    with _lock:
+        cache.update(
+            {
+                "updated_at": updated_iso,
+                "excel_path": str(out_path.resolve()),
+                "error": None,
+                "warning": warning,
+                "data_mode": "futures_only",
+                "excel_export_error": None,
+                "segment": sid,
+                "segment_meta": segment_meta,
+                "spot": spot,
+                "expiry": "",
+                "pcr": None,
+                "total_call_oi": None,
+                "total_put_oi": None,
+                "total_call_volume": None,
+                "total_put_volume": None,
+                "buy_ce": None,
+                "buy_pe": None,
+                "market_move_label": "",
+                "market_direction": "flat",
+                "market_delta_pct": None,
+                "chain_ltp": {},
+                "diagonal_short_expiry_display": "",
+                "diagonal_long_expiry_display": "",
+                "diagonal_short_expiry_iso": "",
+                "diagonal_long_expiry_iso": "",
+                "sr_levels": None,
+                "live_prediction": None,
+                "opening_session": opening_session,
+                "india_vix": None,
+                "nifty_future": nifty_future_payload,
+                "opening_window_today": opening_today,
+                "opening_window_history": hist_rows,
+            }
+        )
+    logger.info("Futures-only OI cycle ok (%s) LTP=%s key=%s", sid, spot, (nifty_future_payload or {}).get("instrument_key"))
+
+
 def run_oi_excel_cycle(segment: str = "nifty") -> None:
     """Fetch chain, update Excel (Summary + Strikewise + History append), refresh suggestion cache."""
     from config.segments import get_segment, segment_public_meta
@@ -208,6 +419,20 @@ def run_oi_excel_cycle(segment: str = "nifty") -> None:
         return
 
     params = load_analysis_parameters(settings)
+
+    if not seg.supports_option_chain:
+        _run_futures_only_cycle(
+            seg=seg,
+            sid=sid,
+            cache=cache,
+            segment_meta=segment_meta,
+            settings=settings,
+            params=params,
+            UpstoxClient=UpstoxClient,
+            UpstoxAPIError=UpstoxAPIError,
+        )
+        return
+
     client: Any = None
     short_disp = ""
     long_disp = ""
@@ -617,6 +842,8 @@ def run_oi_excel_cycle(segment: str = "nifty") -> None:
             "updated_at": updated_iso,
             "excel_path": str(out_path.resolve()),
             "error": None,
+            "warning": None,
+            "data_mode": "option_chain",
             "excel_export_error": None,
             "segment": sid,
             "segment_meta": segment_meta,

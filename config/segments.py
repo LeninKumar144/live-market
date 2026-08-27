@@ -53,6 +53,7 @@ class SegmentConfig:
     search_exchange: str = "NSE"
     search_segment: str = "FO"
     route_path: str = ""
+    supports_option_chain: bool = True
 
 
 DEFAULT_SEGMENT = "nifty"
@@ -114,7 +115,8 @@ def all_segments() -> dict[str, SegmentConfig]:
             id="mcx",
             display_name="MCX Crude Oil",
             short_label="MCX",
-            # Empty → resolve via Upstox search for CRUDEOIL (override with MCX_INSTRUMENT_KEY)
+            # Optional pin for futures quotes; Upstox option-chain API does not support MCX.
+            # Leave empty → resolve near-month CRUDEOIL future via instrument search.
             instrument_key=_env("MCX_INSTRUMENT_KEY", ""),
             strike_step=_env_int("MCX_STRIKE_STEP", 50),
             option_lot_size=_env_int("MCX_OPTION_LOT_SIZE", 100),
@@ -128,6 +130,7 @@ def all_segments() -> dict[str, SegmentConfig]:
             search_exchange="MCX",
             search_segment="FO",
             route_path="/mcx",
+            supports_option_chain=False,
         ),
     }
 
@@ -167,4 +170,5 @@ def segment_public_meta(seg: SegmentConfig) -> dict:
         "show_gift_note": seg.show_gift_note,
         "route_path": seg.route_path or f"/{seg.id}",
         "instrument_key": seg.instrument_key,
+        "supports_option_chain": bool(seg.supports_option_chain),
     }
