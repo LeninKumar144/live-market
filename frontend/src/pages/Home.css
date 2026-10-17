@@ -1506,12 +1506,20 @@
   border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-/* Future candle chart + duplicate trade-plan widget */
+/* Future candle chart + chain OI / entry (single widget) */
 .fut-oi-chart-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
   gap: 1rem;
   margin: 0 0 1.25rem;
+}
+
+.fut-oi-chart-grid--single {
+  grid-template-columns: 1fr;
+}
+
+.osess-legend {
+  margin: 0 0 0.85rem;
 }
 
 .fut-chart-widget {

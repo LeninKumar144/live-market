@@ -1,6 +1,6 @@
 /**
  * Three-phase open bias: pre-open / 0–15m / post-09:30.
- * Data from /oi/status → opening_session.
+ * Each card keeps phase-unique fields; OR / future trend / ΔOI are not repeated across cards.
  */
 function fmtPts(v) {
   if (v == null || Number.isNaN(Number(v))) return "—";
@@ -73,6 +73,8 @@ export default function OpeningSessionCards({ session, showGift = true }) {
   const doi = session.session_doi_vs_915 || {};
   const ft = session.future_trend || {};
   const gift = session.gift_nifty || {};
+  const forming = phase === "forming_or";
+  const post = phase === "post_or" || phase === "after_hours";
 
   return (
     <section className="osess" aria-label="Opening session trend cards">
@@ -80,8 +82,8 @@ export default function OpeningSessionCards({ session, showGift = true }) {
         <div>
           <h3 className="osess__title">Opening session bias</h3>
           <p className="muted small osess__sub">
-            Three clocks: overnight map at the bell → provisional 0–15m → confirmed after 09:30 (OR + ΔOI vs
-            09:15). Heuristic only.
+            Unique open clocks only: overnight map → forming OR → confirmed post-09:30. Gap / VIX live here (not in
+            header pills).
           </p>
         </div>
         <span className={biasClass(session.bias_key)} title={session.phase_label}>
@@ -90,14 +92,28 @@ export default function OpeningSessionCards({ session, showGift = true }) {
       </div>
       {session.disclaimer && <p className="muted small osess__disclaimer">{session.disclaimer}</p>}
 
+      <div className="openwin-legend muted small osess-legend" aria-label="OI vs price future mapping">
+        <span>
+          <strong>OI↑</strong> price↑ → Long buildup
+        </span>
+        <span>
+          <strong>OI↑</strong> price↓ → Short buildup
+        </span>
+        <span>
+          <strong>OI↓</strong> price↓ → Profit booking
+        </span>
+        <span>
+          <strong>OI↓</strong> price↑ → Short covering
+        </span>
+      </div>
+
       <div className="osess-grid">
-        {/* Card 1 — Pre-open */}
         <article className={`osess-card${phaseActive(phase, "pre") ? " osess-card--active" : ""}`}>
           <header className="osess-card__head">
             <span className="osess-card__phase">1 · Pre-open / 9:15</span>
             {phaseActive(phase, "pre") && <span className="osess-card__live">Live phase</span>}
           </header>
-          <p className="osess-card__blurb">Overnight OI map + gap — not today’s session trend.</p>
+          <p className="osess-card__blurb">Overnight map + gap (not session ΔOI).</p>
           <ul className="osess-stats">
             <li>
               <span>Gap</span>
@@ -140,75 +156,85 @@ export default function OpeningSessionCards({ session, showGift = true }) {
                 )}
               </strong>
             </li>
-            <li>
-              <span>GIFT Nifty</span>
-              <strong className="muted">
-                {!showGift
-                  ? "—"
-                  : gift.available
-                    ? "—"
-                    : gift.note || "Not wired"}
-              </strong>
-            </li>
+            {showGift ? (
+              <li>
+                <span>GIFT Nifty</span>
+                <strong className="muted">{gift.available ? "—" : gift.note || "Not wired"}</strong>
+              </li>
+            ) : null}
           </ul>
         </article>
 
-        {/* Card 2 — Forming OR */}
         <article className={`osess-card${phaseActive(phase, "form") ? " osess-card--active" : ""}`}>
           <header className="osess-card__head">
             <span className="osess-card__phase">2 · 0–15 min</span>
             {phaseActive(phase, "form") && <span className="osess-card__live">Provisional</span>}
           </header>
-          <p className="osess-card__blurb">Live vs 09:15 future + forming opening range.</p>
-          <ul className="osess-stats">
-            <li>
-              <span>Future trend</span>
-              <strong>
-                {ft.trend_label || "Needs ticks in 09:15–09:30"}
-                {ft.is_provisional ? " · provisional" : ""}
-              </strong>
-            </li>
-            <li>
-              <span>ΔOI vs 09:15</span>
-              <strong>{doi.available ? doi.label : doi.label || "Awaiting 09:15 chain anchor"}</strong>
-            </li>
-            {doi.available && (
-              <li>
-                <span>CE / PE ΔOI</span>
-                <strong>
-                  {doi.ce_doi != null ? `${doi.ce_doi >= 0 ? "+" : ""}${Number(doi.ce_doi).toLocaleString("en-IN")}` : "—"}
-                  {" / "}
-                  {doi.pe_doi != null ? `${doi.pe_doi >= 0 ? "+" : ""}${Number(doi.pe_doi).toLocaleString("en-IN")}` : "—"}
-                </strong>
-              </li>
-            )}
-          </ul>
-          <OrBlock title="5m OR" orBlock={session.opening_range_5m} vsOr={session.price_vs_or_5m} />
-          <OrBlock title="15m OR (forming)" orBlock={session.opening_range_15m} vsOr={session.price_vs_or_15m} />
+          <p className="osess-card__blurb">Forming window only — OR + live vs 09:15.</p>
+          {forming ? (
+            <>
+              <ul className="osess-stats">
+                <li>
+                  <span>Future trend</span>
+                  <strong>
+                    {ft.trend_label || "Needs ticks in 09:15–09:30"}
+                    {ft.is_provisional ? " · provisional" : ""}
+                  </strong>
+                </li>
+                <li>
+                  <span>ΔOI vs 09:15</span>
+                  <strong>{doi.label || "Awaiting 09:15 chain anchor"}</strong>
+                </li>
+                {doi.available && (
+                  <li>
+                    <span>CE / PE ΔOI</span>
+                    <strong>
+                      {doi.ce_doi != null
+                        ? `${doi.ce_doi >= 0 ? "+" : ""}${Number(doi.ce_doi).toLocaleString("en-IN")}`
+                        : "—"}
+                      {" / "}
+                      {doi.pe_doi != null
+                        ? `${doi.pe_doi >= 0 ? "+" : ""}${Number(doi.pe_doi).toLocaleString("en-IN")}`
+                        : "—"}
+                    </strong>
+                  </li>
+                )}
+              </ul>
+              <OrBlock title="5m OR" orBlock={session.opening_range_5m} vsOr={session.price_vs_or_5m} />
+              <OrBlock title="15m OR (forming)" orBlock={session.opening_range_15m} vsOr={session.price_vs_or_15m} />
+            </>
+          ) : (
+            <p className="muted small">
+              {phase === "pre_open"
+                ? "Activates at 09:15 when the opening range starts forming."
+                : "Window closed — see card 3 for the confirmed 09:15–09:30 read."}
+            </p>
+          )}
         </article>
 
-        {/* Card 3 — Post 9:30 */}
         <article className={`osess-card${phaseActive(phase, "post") ? " osess-card--active" : ""}`}>
           <header className="osess-card__head">
             <span className="osess-card__phase">3 · After 09:30</span>
             {phaseActive(phase, "post") && <span className="osess-card__live">Confirmed</span>}
           </header>
-          <p className="osess-card__blurb">OR acceptance + session ΔOI vs 09:15 + future 2×2.</p>
-          <ul className="osess-stats">
-            <li>
-              <span>09:15–09:30 future</span>
-              <strong>{ft.ready ? ft.trend_label || "—" : "Not locked until 09:30 anchor"}</strong>
-            </li>
-            <li>
-              <span>Session ΔOI</span>
-              <strong>{doi.available ? doi.label : "Needs 09:15 chain snapshot (keep API running)"}</strong>
-            </li>
-            <li>
-              <span>Price vs 15m OR</span>
-              <strong>{session.price_vs_or_15m?.label || "—"}</strong>
-            </li>
-          </ul>
-          <OrBlock title="15m opening range" orBlock={session.opening_range_15m} vsOr={session.price_vs_or_15m} />
+          <p className="osess-card__blurb">Locked OR + future 2×2 after 09:30.</p>
+          {post ? (
+            <>
+              <ul className="osess-stats">
+                <li>
+                  <span>09:15–09:30 future</span>
+                  <strong>{ft.ready ? ft.trend_label || "—" : "Not locked until 09:30 anchor"}</strong>
+                </li>
+                <li>
+                  <span>Session ΔOI vs 09:15</span>
+                  <strong>{doi.available ? doi.label : "Needs 09:15 chain snapshot (keep API running)"}</strong>
+                </li>
+              </ul>
+              <OrBlock title="15m opening range" orBlock={session.opening_range_15m} vsOr={session.price_vs_or_15m} />
+            </>
+          ) : (
+            <p className="muted small">Confirms after 09:30 when the late future anchor is captured.</p>
+          )}
         </article>
       </div>
 

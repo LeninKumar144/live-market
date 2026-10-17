@@ -95,14 +95,12 @@ export function OiFutureTradePlanBody({ fc }) {
   return (
     <div className="fut-plan-body">
       <div className="fut-plan-meta">
-        <span className="pill pill--muted">{fc.symbol || "NIFTY FUT"}</span>
         {fc.session_day_ist ? (
-          <span className="pill pill--muted">Session {fc.session_day_ist} (IST date)</span>
+          <span className="pill pill--muted">Session {fc.session_day_ist} (IST)</span>
         ) : null}
-        {fc.ltp != null ? <span className="pill pill--muted">LTP {Number(fc.ltp).toFixed(2)}</span> : null}
-        {fc.chain_refreshed_at ? (
-          <span className="pill pill--ok" title="Option chain snapshot used for OI/PCR">
-            Chain {new Date(fc.chain_refreshed_at).toLocaleTimeString()}
+        {p.pcr != null ? (
+          <span className="pill pill--muted" title="Put/Call OI ratio from chain snapshot">
+            PCR {Number(p.pcr).toFixed(4)}
           </span>
         ) : null}
         {fc.candles_fetched_at ? (
@@ -272,17 +270,16 @@ function FutureCandleChart({ fc }) {
   return <div className="fut-chart-canvas" ref={ref} role="img" aria-label="NIFTY future one-minute candles" />;
 }
 
-/** Widget A: live future candlesticks + full synthesis details. */
+/** Live future candlesticks + chain Σ CE/PE / ΔOI / entry-exit (single widget — no duplicate text panel). */
 export function OiFutureChartWithDetails({ fc }) {
   return (
     <article className="fut-chart-widget">
       <header className="fut-chart-widget__head">
         <div>
-          <h3 className="fut-chart-widget__title">Live future — candles + Σ CE / Σ PE / PCR / ΔOI</h3>
+          <h3 className="fut-chart-widget__title">Live future — candles + chain OI / volume / entry</h3>
           <p className="muted small fut-chart-widget__sub">
-            1-minute NIFTY index future from Upstox; Σ CE/PE OI, live Σ CE/PE volume, PCR, and session ΔOI from the same
-            option-chain snapshot as the rest of this page. Entry/exit levels are rule-based anchors from the last bar and
-            swing/pivot context — not guaranteed fills.
+            1-minute future candles plus Σ CE/PE OI, volume, ΔOI, and rule-based entry/exit from the same chain snapshot.
+            Chain totals live here only (not repeated in the header pills).
           </p>
         </div>
       </header>
@@ -290,21 +287,6 @@ export function OiFutureChartWithDetails({ fc }) {
       <div className="fut-chart-widget__details">
         <OiFutureTradePlanBody fc={fc} />
       </div>
-    </article>
-  );
-}
-
-/** Widget B: identical synthesis text only (for a second screen or glance view). */
-export function OiFutureTradePlanOnly({ fc }) {
-  return (
-    <article className="fut-chart-widget fut-chart-widget--textonly">
-      <header className="fut-chart-widget__head">
-        <div>
-          <h3 className="fut-chart-widget__title">Entry / exit read — same details (no chart)</h3>
-          <p className="muted small fut-chart-widget__sub">Mirrors the panel above; updates on the same poll.</p>
-        </div>
-      </header>
-      <OiFutureTradePlanBody fc={fc} />
     </article>
   );
 }

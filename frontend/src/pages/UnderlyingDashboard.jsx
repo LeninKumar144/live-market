@@ -3,7 +3,7 @@ import { useLocation } from "react-router-dom";
 import { api } from "../api/client.js";
 import SRLevelsPanel from "../components/SRLevelsPanel.jsx";
 import OpeningSessionCards from "../components/OpeningSessionCards.jsx";
-import { OiFutureChartWithDetails, OiFutureTradePlanOnly } from "../components/OiFutureChartWidgets.jsx";
+import { OiFutureChartWithDetails } from "../components/OiFutureChartWidgets.jsx";
 import "./Home.css";
 
 const OI_REFRESH_MS = 15000;
@@ -50,28 +50,6 @@ function wallVerdictClass(verdict) {
   if (v === "break_up_more_likely" || v === "hold_floor_more_likely") return "wall-verdict wall-verdict--support-up";
   if (v === "break_down_more_likely" || v === "hold_cap_more_likely") return "wall-verdict wall-verdict--resist-dn";
   return "wall-verdict wall-verdict--neutral";
-}
-
-function OiPriceFutureLegend() {
-  return (
-    <div className="oi-future-legend-wrap">
-      <h3 className="oi-future-legend-wrap__title">OI vs price (index future)</h3>
-      <div className="openwin-legend muted small">
-        <div>
-          <strong>OI↑</strong> + <strong>price↑</strong> → Long buildup
-        </div>
-        <div>
-          <strong>OI↑</strong> + <strong>price↓</strong> → Short buildup
-        </div>
-        <div>
-          <strong>OI↓</strong> + <strong>price↓</strong> → Profit booking
-        </div>
-        <div>
-          <strong>OI↓</strong> + <strong>price↑</strong> → Short covering
-        </div>
-      </div>
-    </div>
-  );
 }
 
 function legLine(row) {
@@ -219,7 +197,7 @@ export default function UnderlyingDashboard() {
   const shortLabel = meta?.short_label || localLabel.short;
   const displayName = meta?.display_name || localLabel.display;
   const showGift = meta?.show_gift_note ?? segment === "nifty";
-  const showVix = meta?.show_india_vix ?? segment !== "mcx";
+  const futuresOnly = oi?.data_mode === "futures_only";
   const excelHint = oi?.excel_path
     ? oi.excel_path.replace(/^.*[\\/]/, "")
     : `${segment}_oi_live.xlsx`;
@@ -302,10 +280,15 @@ export default function UnderlyingDashboard() {
   }, [fetchFutureChart]);
 
   useEffect(() => {
+    if (futuresOnly || segment === "mcx") {
+      setHedging(null);
+      setHedgingErr(null);
+      return undefined;
+    }
     fetchHedging();
     const id = setInterval(fetchHedging, HEDGING_REFRESH_MS);
     return () => clearInterval(id);
-  }, [fetchHedging]);
+  }, [fetchHedging, futuresOnly, segment]);
 
   const chainTime =
     oi?.updated_at &&
@@ -414,67 +397,22 @@ export default function UnderlyingDashboard() {
           <div className="oi-meta">
             {oi.spot > 0 && (
               <span className="pill pill--muted">
-                Spot {oi.spot.toFixed(2)} · Exp {oi.expiry || "—"}
-              </span>
-            )}
-            {oi.pcr != null && (
-              <span className="pill pill--muted">PCR {Number(oi.pcr).toFixed(4)}</span>
-            )}
-            {showVix && oi.india_vix?.ltp != null && (
-              <span className="pill pill--muted" title="India VIX from Upstox">
-                VIX {Number(oi.india_vix.ltp).toFixed(2)}
-                {oi.india_vix.net_change != null
-                  ? ` (${Number(oi.india_vix.net_change) >= 0 ? "+" : ""}${Number(oi.india_vix.net_change).toFixed(2)})`
-                  : ""}
-              </span>
-            )}
-            {oi.opening_session?.gap?.label && (
-              <span
-                className="pill pill--muted"
-                title="Future session open vs previous close"
-              >
-                {oi.opening_session.gap.label}
-              </span>
-            )}
-            {oi.total_call_oi != null && (
-              <span className="pill pill--muted">Σ CE OI {(oi.total_call_oi / 1e5).toFixed(2)}L</span>
-            )}
-            {oi.total_put_oi != null && (
-              <span className="pill pill--muted">Σ PE OI {(oi.total_put_oi / 1e5).toFixed(2)}L</span>
-            )}
-            {oi.total_call_volume != null && (
-              <span className="pill pill--muted" title="Summed CE volume across strikes (session)">
-                Σ CE vol {Number(oi.total_call_volume).toLocaleString("en-IN")}
-              </span>
-            )}
-            {oi.total_put_volume != null && (
-              <span className="pill pill--muted" title="Summed PE volume across strikes (session)">
-                Σ PE vol {Number(oi.total_put_volume).toLocaleString("en-IN")}
+                Spot {oi.spot.toFixed(2)}
+                {!futuresOnly && oi.expiry ? ` · Exp ${oi.expiry}` : ""}
               </span>
             )}
             {oi.market_move_label && (
               <span className="pill pill--ok">Move: {oi.market_move_label}</span>
             )}
-            {oi.updated_at && (
-              <span className="pill pill--ok">
-                Chain {new Date(oi.updated_at).toLocaleTimeString()}
-              </span>
-            )}
-            {oi.excel_path && (
-              <span className="pill pill--muted" title={oi.excel_path}>
-                Excel: …{oi.excel_path.slice(-40)}
-              </span>
-            )}
           </div>
-
-          <OiPriceFutureLegend />
 
           <div className="fut-open-grid">
             {oi.nifty_future && (
               <div className="fut-card">
                 <h3 className="fut-card__title">{futureTitle}</h3>
                 <p className="muted small fut-card__sub">
-                  Nearest-month contract from Upstox; same refresh as the option chain.
+                  Nearest-month future quote only — gap &amp; OR are in Opening session below; chain Σ CE/PE in the
+                  chart widget.
                 </p>
                 <div className="fut-card__main">
                   <div>
@@ -518,22 +456,14 @@ export default function UnderlyingDashboard() {
                     H {oi.nifty_future.ohlc_high != null ? Number(oi.nifty_future.ohlc_high).toFixed(2) : "—"}{" "}
                     L {oi.nifty_future.ohlc_low != null ? Number(oi.nifty_future.ohlc_low).toFixed(2) : "—"}{" "}
                     C {oi.nifty_future.ohlc_close != null ? Number(oi.nifty_future.ohlc_close).toFixed(2) : "—"}
-                    {oi.opening_session?.gap?.gap_points != null && (
-                      <>
-                        {" "}
-                        · Gap {Number(oi.opening_session.gap.gap_points) >= 0 ? "+" : ""}
-                        {Number(oi.opening_session.gap.gap_points).toFixed(1)} vs prev close
-                      </>
-                    )}
                   </p>
                 )}
               </div>
             )}
           </div>
 
-          <div className="fut-oi-chart-grid">
+          <div className="fut-oi-chart-grid fut-oi-chart-grid--single">
             <OiFutureChartWithDetails fc={futureChart} />
-            <OiFutureTradePlanOnly fc={futureChart} />
           </div>
 
           <OpeningSessionCards session={oi.opening_session} showGift={showGift} />
@@ -576,119 +506,100 @@ export default function UnderlyingDashboard() {
               </div>
             )}
 
-          <div className="oi-legs">
-            <div className="oi-leg oi-leg--ce">
-              <h3 className="oi-leg__title">Suggested BUY CE</h3>
-              {oi.buy_ce ? (
-                <>
-                  <p className="oi-leg__strike">{Math.round(oi.buy_ce.strike)}</p>
-                  <ul className="oi-leg__stats">
-                    <li>LTP {Number(oi.buy_ce.ltp).toFixed(2)}</li>
-                    <li>OI {oi.buy_ce.open_interest?.toLocaleString?.() ?? oi.buy_ce.open_interest}</li>
-                    <li>Vol {oi.buy_ce.volume?.toLocaleString?.() ?? oi.buy_ce.volume}</li>
-                  </ul>
-                  <p className="oi-leg__note">{oi.buy_ce.execution_note}</p>
-                </>
-              ) : (
-                <p className="muted small">Waiting for first successful chain fetch…</p>
-              )}
+          {!futuresOnly && (
+            <div className="oi-legs">
+              <div className="oi-leg oi-leg--ce">
+                <h3 className="oi-leg__title">Suggested BUY CE</h3>
+                {oi.buy_ce ? (
+                  <>
+                    <p className="oi-leg__strike">{Math.round(oi.buy_ce.strike)}</p>
+                    <ul className="oi-leg__stats">
+                      <li>LTP {Number(oi.buy_ce.ltp).toFixed(2)}</li>
+                      <li>OI {oi.buy_ce.open_interest?.toLocaleString?.() ?? oi.buy_ce.open_interest}</li>
+                      <li>Vol {oi.buy_ce.volume?.toLocaleString?.() ?? oi.buy_ce.volume}</li>
+                    </ul>
+                    <p className="oi-leg__note">{oi.buy_ce.execution_note}</p>
+                  </>
+                ) : (
+                  <p className="muted small">Waiting for first successful chain fetch…</p>
+                )}
+              </div>
+              <div className="oi-leg oi-leg--pe">
+                <h3 className="oi-leg__title">Suggested BUY PE</h3>
+                {oi.buy_pe ? (
+                  <>
+                    <p className="oi-leg__strike">{Math.round(oi.buy_pe.strike)}</p>
+                    <ul className="oi-leg__stats">
+                      <li>LTP {Number(oi.buy_pe.ltp).toFixed(2)}</li>
+                      <li>OI {oi.buy_pe.open_interest?.toLocaleString?.() ?? oi.buy_pe.open_interest}</li>
+                      <li>Vol {oi.buy_pe.volume?.toLocaleString?.() ?? oi.buy_pe.volume}</li>
+                    </ul>
+                    <p className="oi-leg__note">{oi.buy_pe.execution_note}</p>
+                  </>
+                ) : (
+                  <p className="muted small">Waiting for first successful chain fetch…</p>
+                )}
+              </div>
             </div>
-            <div className="oi-leg oi-leg--pe">
-              <h3 className="oi-leg__title">Suggested BUY PE</h3>
-              {oi.buy_pe ? (
-                <>
-                  <p className="oi-leg__strike">{Math.round(oi.buy_pe.strike)}</p>
-                  <ul className="oi-leg__stats">
-                    <li>LTP {Number(oi.buy_pe.ltp).toFixed(2)}</li>
-                    <li>OI {oi.buy_pe.open_interest?.toLocaleString?.() ?? oi.buy_pe.open_interest}</li>
-                    <li>Vol {oi.buy_pe.volume?.toLocaleString?.() ?? oi.buy_pe.volume}</li>
-                  </ul>
-                  <p className="oi-leg__note">{oi.buy_pe.execution_note}</p>
-                </>
-              ) : (
-                <p className="muted small">Waiting for first successful chain fetch…</p>
-              )}
-            </div>
-          </div>
+          )}
 
-          <div className="sr-section">
-            <h3 className="sr-section__title">Support &amp; resistance</h3>
-            <p className="muted small sr-section__sub">
-              <strong>Pivot PP / R1–R2 / S1–S2</strong> use classic formulas on the prior trading session, prior ISO week,
-              and prior calendar month from <strong>live {shortLabel} daily candles</strong> (refetched on each OI sync).
-              <strong> OI walls</strong> use the nearest / weekly / monthly option expiries and rank strikes by PE OI
-              (support) and CE OI (resistance).
-            </p>
-            <SRLevelsPanel bundle={oi.sr_levels} />
-          </div>
+          {!futuresOnly && oi.sr_levels && (
+            <div className="sr-section">
+              <h3 className="sr-section__title">Support &amp; resistance</h3>
+              <p className="muted small sr-section__sub">
+                Pivot levels from daily candles; OI walls by PE/CE OI. Break-vs-hold verdicts (if any) are in the slim
+                card above — not repeated here.
+              </p>
+              <SRLevelsPanel bundle={oi.sr_levels} />
+            </div>
+          )}
           </>
         )}
       </section>
 
-      <section className="card hedge-panel">
-        <div className="card-head hedge-panel__head">
-          <div>
-            <h2>Hedging strategies</h2>
-            <p className="muted small hedge-panel__sub">
-              ₹ amounts = LTP × lot (see chip below) at last chain snapshot; max P/L from European
-              intrinsic grid at expiry. Indicative margin ≈ defined-risk loss — broker SPAN can differ.
-            </p>
+      {!futuresOnly && (
+        <section className="card hedge-panel">
+          <div className="card-head hedge-panel__head">
+            <div>
+              <h2>Hedging strategies</h2>
+              <p className="muted small hedge-panel__sub">
+                Spot / PCR stay in the chart &amp; opening cards above. Here: regime bias, ATM, and strategy legs only.
+              </p>
+            </div>
+            <button type="button" className="btn btn--ghost" onClick={fetchHedging}>
+              Refresh hedging
+            </button>
           </div>
-          <button type="button" className="btn btn--ghost" onClick={fetchHedging}>
-            Refresh hedging
-          </button>
-        </div>
-        {hedgingErr && <p className="oi-panel__warn">{hedgingErr}</p>}
-        {hedging?.meta && (
-          <div className="hedge-meta">
-            <span className="pill pill--muted">Bias {hedging.meta.bias}</span>
-            <span className="pill pill--muted">Vol {hedging.meta.volatility}</span>
-            {hedging.meta.spot > 0 && (
-              <span className="pill pill--muted">Spot {Number(hedging.meta.spot).toFixed(2)}</span>
-            )}
-            <span className="pill pill--muted">ATM {hedging.meta.atm_strike}</span>
-            {hedging.meta.pcr != null && (
-              <span className="pill pill--muted">PCR {Number(hedging.meta.pcr).toFixed(4)}</span>
-            )}
-            <span className="pill pill--ok">
-              Regime {Math.round((hedging.meta.regime_confidence ?? 0) * 100)}%
-            </span>
-            {hedging.meta.nifty_option_lot_size != null && (
-              <span className="pill pill--muted">Lot {hedging.meta.nifty_option_lot_size}</span>
-            )}
+          {hedgingErr && <p className="oi-panel__warn">{hedgingErr}</p>}
+          {hedging?.meta && (
+            <div className="hedge-meta">
+              <span className="pill pill--muted">Bias {hedging.meta.bias}</span>
+              <span className="pill pill--muted">Vol {hedging.meta.volatility}</span>
+              <span className="pill pill--muted">ATM {hedging.meta.atm_strike}</span>
+              <span className="pill pill--ok">
+                Regime {Math.round((hedging.meta.regime_confidence ?? 0) * 100)}%
+              </span>
+              {hedging.meta.nifty_option_lot_size != null && (
+                <span className="pill pill--muted">Lot {hedging.meta.nifty_option_lot_size}</span>
+              )}
+            </div>
+          )}
+          {hedging?.meta?.signal_context && (
+            <p className="muted small hedge-context">{hedging.meta.signal_context}</p>
+          )}
+          <div className="hedge-grid">
+            <HedgingStrategyCard horizon="Intraday" horizonClass="intraday" data={hedging?.intraday} />
+            <HedgingStrategyCard horizon="Weekly" horizonClass="weekly" data={hedging?.weekly} />
+            <HedgingStrategyCard horizon="Monthly" horizonClass="monthly" data={hedging?.monthly} />
           </div>
-        )}
-        {hedging?.meta?.signal_context && (
-          <p className="muted small hedge-context">{hedging.meta.signal_context}</p>
-        )}
-        <div className="hedge-grid">
-          <HedgingStrategyCard
-            horizon="Intraday"
-            horizonClass="intraday"
-            data={hedging?.intraday}
-          />
-          <HedgingStrategyCard
-            horizon="Weekly"
-            horizonClass="weekly"
-            data={hedging?.weekly}
-          />
-          <HedgingStrategyCard
-            horizon="Monthly"
-            horizonClass="monthly"
-            data={hedging?.monthly}
-          />
-        </div>
 
-        <h3 className="hedge-special__title">Iron condor &amp; diagonal</h3>
-        <p className="muted small hedge-special__sub">
-          Same <code className="code-inline">/hedging/{segment}</code> poll as above — strikes, ₹ figures, and diagonal expiry
-          weekday/date labels refresh when the option chain sync runs (Upstox contract list).
-        </p>
-        <div className="hedge-grid hedge-grid--special">
-          <HedgingStrategyCard horizon="Iron Condor" horizonClass="ic" data={hedging?.iron_condor} />
-          <HedgingStrategyCard horizon="Diagonal" horizonClass="diagonal" data={hedging?.diagonal} />
-        </div>
-      </section>
+          <h3 className="hedge-special__title">Iron condor &amp; diagonal</h3>
+          <div className="hedge-grid hedge-grid--special">
+            <HedgingStrategyCard horizon="Iron Condor" horizonClass="ic" data={hedging?.iron_condor} />
+            <HedgingStrategyCard horizon="Diagonal" horizonClass="diagonal" data={hedging?.diagonal} />
+          </div>
+        </section>
+      )}
     </>
   );
 }
