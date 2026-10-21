@@ -331,17 +331,41 @@ def _coerce_segment_meta(raw: object) -> SegmentMetaOut | None:
         return None
 
 
+def _is_excel_noise_error(message: object) -> bool:
+    msg = str(message or "")
+    if not msg:
+        return False
+    low = msg.lower()
+    return (
+        "CRC" in msg
+        or "BadZipFile" in msg
+        or "zipfile" in low
+        or "xl/worksheets" in msg
+        or "excel export failed" in low
+    )
+
+
 def _oi_status_from_cache(segment: str = "nifty") -> OIStatusResponse:
     sid = (segment or "nifty").strip().lower()
     c = get_oi_cache_snapshot(sid)
     buy_ce = c.get("buy_ce")
     buy_pe = c.get("buy_pe")
+    raw_error = c.get("error")
+    # Corrupt workbook noise is surfaceable as excel_export_error only — live board stays ok.
+    excel_noise = _is_excel_noise_error(raw_error)
+    live_error = None if excel_noise else raw_error
+    excel_export_error = c.get("excel_export_error")
+    if excel_noise and not excel_export_error:
+        excel_export_error = (
+            "Excel workbook was unreadable (corrupt zip/CRC). Live chain still updates; "
+            f"export will rewrite on the next successful cycle. ({raw_error})"
+        )
     return OIStatusResponse(
-        ok=bool(c.get("updated_at")) and c.get("error") is None,
-        error=c.get("error"),
+        ok=bool(c.get("updated_at")) and live_error is None,
+        error=live_error,
         warning=c.get("warning"),
         data_mode=str(c.get("data_mode") or "option_chain"),
-        excel_export_error=c.get("excel_export_error"),
+        excel_export_error=excel_export_error,
         updated_at=c.get("updated_at"),
         excel_path=c.get("excel_path"),
         segment=str(c.get("segment") or sid),
@@ -385,7 +409,14 @@ def post_oi_refresh() -> OIStatusResponse:
         run_oi_excel_cycle("nifty")
     except Exception as e:
         logger.exception("OI refresh failed")
-        set_oi_fatal_error(str(e), segment="nifty")
+        # Excel/export faults are recorded on cache by the cycle; only hard crashes land here.
+        msg = str(e)
+        if "CRC" in msg or "BadZipFile" in msg or "zipfile" in msg.lower():
+            snap = get_oi_cache_snapshot("nifty")
+            if snap.get("updated_at"):
+                logger.warning("OI refresh Excel fault ignored (live cache kept): %s", msg)
+                return _oi_status_from_cache("nifty")
+        set_oi_fatal_error(msg, segment="nifty")
     return _oi_status_from_cache("nifty")
 
 
@@ -398,7 +429,13 @@ def post_oi_refresh_segment(
         run_oi_excel_cycle(sid)
     except Exception as e:
         logger.exception("OI refresh failed (%s)", sid)
-        set_oi_fatal_error(str(e), segment=sid)
+        msg = str(e)
+        if "CRC" in msg or "BadZipFile" in msg or "zipfile" in msg.lower():
+            snap = get_oi_cache_snapshot(sid)
+            if snap.get("updated_at"):
+                logger.warning("OI refresh Excel fault ignored (%s, live cache kept): %s", sid, msg)
+                return _oi_status_from_cache(sid)
+        set_oi_fatal_error(msg, segment=sid)
     return _oi_status_from_cache(sid)
 
 

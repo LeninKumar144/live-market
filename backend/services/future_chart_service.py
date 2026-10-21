@@ -181,8 +181,24 @@ def get_future_chart_payload(segment: str = "nifty") -> dict[str, Any]:
         "candles_fetched_at": None,
     }
 
-    if not snap.get("updated_at") or snap.get("error"):
-        base_err["error"] = str(snap.get("error") or "Option chain not ready — wait for OI refresh.")
+    snap_err = str(snap.get("error") or "")
+    # Excel CRC / zip faults must not block the candle widget when a live snapshot exists.
+    excel_noise = bool(
+        snap_err
+        and (
+            "CRC" in snap_err
+            or "BadZipFile" in snap_err
+            or "zipfile" in snap_err.lower()
+            or "xl/worksheets" in snap_err
+        )
+    )
+    if not snap.get("updated_at"):
+        base_err["error"] = snap_err or "Option chain not ready — wait for OI refresh."
+        with _lock:
+            _cache[cache_key] = {"mono": now, "payload": base_err}
+        return base_err
+    if snap_err and not excel_noise:
+        base_err["error"] = snap_err
         with _lock:
             _cache[cache_key] = {"mono": now, "payload": base_err}
         return base_err

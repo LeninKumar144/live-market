@@ -124,6 +124,61 @@ def oi_history_max_rows() -> int:
     return max(100, min(50_000, int(os.environ.get("OI_HISTORY_MAX_ROWS", "5000"))))
 
 
+def _quarantine_corrupt_excel(path: Path, reason: object) -> None:
+    """Move an unreadable workbook aside so the next cycle can rewrite a clean file."""
+    try:
+        if not path.is_file():
+            return
+        stamp = datetime.now(IST).strftime("%Y%m%d_%H%M%S")
+        dest = path.with_name(f"{path.stem}.corrupt_{stamp}{path.suffix}")
+        path.replace(dest)
+        logger.warning("Quarantined corrupt OI Excel %s -> %s (%s)", path, dest, reason)
+    except Exception:
+        try:
+            path.unlink(missing_ok=True)
+            logger.warning("Deleted corrupt OI Excel %s (%s)", path, reason)
+        except Exception as e2:
+            logger.warning("Could not remove corrupt OI Excel %s: %s", path, e2)
+
+
+def _safe_read_history_df(path: Path) -> pd.DataFrame:
+    """
+    Read History sheet for append. Never raise — a corrupt .xlsx (Bad CRC-32 / BadZipFile)
+    must not abort the live OI cache update.
+    """
+    if not path.is_file():
+        return pd.DataFrame()
+    try:
+        return pd.read_excel(path, sheet_name="History")
+    except Exception as e:
+        # BadZipFile / openpyxl InvalidFileException / CRC errors inherit Exception, not OSError.
+        logger.warning("OI Excel History unreadable (%s): %s — starting fresh History sheet", path, e)
+        _quarantine_corrupt_excel(path, e)
+        return pd.DataFrame()
+
+
+def _atomic_excel_write(path: Path, write_sheets) -> None:
+    """
+    Write workbook via a temp file then os.replace so readers never see a half-written zip
+    (half-written xlsx is the usual cause of Bad CRC-32 on sheet XML).
+    `write_sheets` is called with an open ExcelWriter.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp.xlsx")
+    try:
+        if tmp.exists():
+            tmp.unlink()
+        with pd.ExcelWriter(tmp, engine="openpyxl") as writer:
+            write_sheets(writer)
+        os.replace(tmp, path)
+    finally:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except Exception:
+            pass
+
+
 def _quote_key_map(data: dict[str, Any]) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for k, v in (data or {}).items():
@@ -317,13 +372,6 @@ def _run_futures_only_cycle(
             {"Field": "Note", "Value": warning},
         ]
     )
-    try:
-        with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
-            summary.to_excel(writer, sheet_name="Summary", index=False)
-            OI_VS_PRICE_FUTURE_LEGEND.to_excel(writer, sheet_name="OI_vs_price_future", index=False)
-    except Exception as e:
-        logger.debug("MCX futures Excel write skipped: %s", e)
-
     with _lock:
         cache.update(
             {
@@ -361,6 +409,17 @@ def _run_futures_only_cycle(
                 "opening_window_history": hist_rows,
             }
         )
+    try:
+
+        def _write_fut(writer: Any) -> None:
+            summary.to_excel(writer, sheet_name="Summary", index=False)
+            OI_VS_PRICE_FUTURE_LEGEND.to_excel(writer, sheet_name="OI_vs_price_future", index=False)
+
+        _atomic_excel_write(out_path, _write_fut)
+    except Exception as e:
+        logger.warning("MCX futures Excel write skipped (%s): %s", sid, e)
+        with _lock:
+            cache["excel_export_error"] = f"Excel export failed: {e}"
     logger.info("Futures-only OI cycle ok (%s) LTP=%s key=%s", sid, spot, (nifty_future_payload or {}).get("instrument_key"))
 
 
@@ -713,28 +772,17 @@ def run_oi_excel_cycle(segment: str = "nifty") -> None:
     out_path = oi_excel_path(sid)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    hist_df = pd.DataFrame()
-    if out_path.is_file():
-        try:
-            hist_df = pd.read_excel(out_path, sheet_name="History")
-        except (ValueError, OSError, PermissionError):
-            hist_df = pd.DataFrame()
-
-    hist_row = pd.DataFrame(
-        [
-            {
-                "Timestamp_IST": now_str,
-                "Spot": spot,
-                "Expiry": expiry,
-                "Total_CE_OI": total_ce,
-                "Total_PE_OI": total_pe,
-                "PCR": round(pcr, 6),
-                "Buy_CE_Strike": int(ce_strike),
-                "Buy_PE_Strike": int(pe_strike),
-            }
-        ]
-    )
-    hist_df = pd.concat([hist_df, hist_row], ignore_index=True).tail(oi_history_max_rows())
+    # History append is Excel-only bookkeeping — never block the live cache on a corrupt workbook.
+    hist_row = {
+        "Timestamp_IST": now_str,
+        "Spot": spot,
+        "Expiry": expiry,
+        "Total_CE_OI": total_ce,
+        "Total_PE_OI": total_pe,
+        "PCR": round(pcr, 6),
+        "Buy_CE_Strike": int(ce_strike),
+        "Buy_PE_Strike": int(pe_strike),
+    }
 
     updated_iso = datetime.now(IST).isoformat()
     hist_rows: list[Any] = []
@@ -878,13 +926,23 @@ def run_oi_excel_cycle(segment: str = "nifty") -> None:
             upd["opening_window_today"] = opening_today
         cache.update(upd)
 
+    # Excel is best-effort after the live snapshot is already published to the API.
     try:
-        with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
+        hist_df = _safe_read_history_df(out_path)
+        hist_df = pd.concat([hist_df, pd.DataFrame([hist_row])], ignore_index=True).tail(
+            oi_history_max_rows()
+        )
+
+        def _write_chain(writer: Any) -> None:
             summary.to_excel(writer, sheet_name="Summary", index=False)
             df.to_excel(writer, sheet_name="Strikewise_CE_PE_OI", index=False)
             hist_df.to_excel(writer, sheet_name="History", index=False)
             OI_VS_PRICE_FUTURE_LEGEND.to_excel(writer, sheet_name="OI_vs_price_future", index=False)
+
+        _atomic_excel_write(out_path, _write_chain)
         logger.info("OI Excel updated (%s): %s rows -> %s", sid, len(df), out_path)
+        with _lock:
+            cache["excel_export_error"] = None
     except (PermissionError, OSError) as e:
         hint = (
             "Could not write Excel - the file may be open in Excel or another app. "
@@ -907,6 +965,7 @@ def run_all_oi_excel_cycles() -> None:
         try:
             run_oi_excel_cycle(sid)
         except Exception:
+            # Keep last good snapshot (ok) — Excel/transient faults must not freeze the board.
             logger.exception("OI cycle failed for segment %s", sid)
 
 
@@ -921,6 +980,23 @@ def set_oi_fatal_error(message: str, segment: str = "nifty") -> None:
         meta = segment_public_meta(get_segment(sid))
     except Exception:
         pass
+    msg = str(message or "")
+    # Never promote Excel zip/CRC faults to fatal — demote to export warning.
+    if msg and (
+        "CRC" in msg
+        or "BadZipFile" in msg
+        or "zipfile" in msg.lower()
+        or "xl/worksheets" in msg
+    ):
+        with _lock:
+            cache["excel_export_error"] = (
+                "Excel workbook was unreadable (corrupt zip/CRC). Live chain still updates; "
+                f"export will rewrite on the next successful cycle. ({msg})"
+            )
+            cache["segment"] = sid
+            if meta is not None:
+                cache["segment_meta"] = meta
+        return
     with _lock:
         cache["error"] = message
         cache["segment"] = sid
@@ -928,7 +1004,28 @@ def set_oi_fatal_error(message: str, segment: str = "nifty") -> None:
             cache["segment_meta"] = meta
 
 
+def clear_excel_noise_error(segment: str = "nifty") -> None:
+    """Drop sticky CRC/BadZipFile from cache.error so the board can show ok again."""
+    cache = _seg_cache(segment)
+    with _lock:
+        err = str(cache.get("error") or "")
+        if not err:
+            return
+        if (
+            "CRC" in err
+            or "BadZipFile" in err
+            or "zipfile" in err.lower()
+            or "xl/worksheets" in err
+        ):
+            if not cache.get("excel_export_error"):
+                cache["excel_export_error"] = (
+                    "Excel workbook was unreadable (corrupt zip/CRC). Live chain still updates."
+                )
+            cache["error"] = None
+
+
 def get_oi_cache_snapshot(segment: str = "nifty") -> dict[str, Any]:
+    clear_excel_noise_error(segment)
     cache = _seg_cache(segment)
     with _lock:
         return dict(cache)
